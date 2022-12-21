@@ -80,6 +80,7 @@ dependencies {
 
 	testRuntimeOnly testLibs.log4j2
 	testRuntimeOnly libs.byteBuddy
+	testRuntimeOnly libs.asmAnalysis
 
 	//Databases
 	testRuntimeOnly dbLibs.h2

@@ -6,6 +6,7 @@
  */
 package org.hibernate.bytecode.internal.none;
 
+import java.lang.reflect.Constructor;
 import java.util.Map;
 
 import org.hibernate.HibernateException;
@@ -50,6 +51,11 @@ public final class BytecodeProviderImpl implements BytecodeProvider {
 
 	@Override
 	public Enhancer getEnhancer(EnhancementContext enhancementContext) {
+		return null;
+	}
+
+	@Override
+	public String[] determineConstructorArgumentFieldAssignments(Constructor<?> instantiator) {
 		return null;
 	}
 }

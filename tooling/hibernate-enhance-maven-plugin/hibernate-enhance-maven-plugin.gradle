@@ -25,6 +25,7 @@ dependencies {
     implementation( jakartaLibs.jpa ) { transitive = false }
     implementation( jakartaLibs.jta ) { transitive = false }
     implementation libs.byteBuddy
+    implementation libs.asmAnalysis
 
     implementation( mavenLibs.mavenCore ) { transitive = false }
     implementation( mavenLibs.mavenArtifact ) { transitive = false }
@@ -55,6 +56,7 @@ task processPluginXml(type: Copy) {
             + generateMavenDependency(jakartaLibs.jta)\
             + generateMavenDependency(libs.hcann)\
             + generateMavenDependency(libs.byteBuddy)\
+            + generateMavenDependency(libs.asmAnalysis)\
             + generateMavenDependency(libs.logging)\
             + generateMavenDependency("org.hibernate:hibernate-core:" + project.version)])
 }

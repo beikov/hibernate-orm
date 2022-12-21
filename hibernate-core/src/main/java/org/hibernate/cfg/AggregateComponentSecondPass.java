@@ -7,7 +7,6 @@
 package org.hibernate.cfg;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
@@ -21,6 +20,7 @@ import org.hibernate.boot.model.relational.Database;
 import org.hibernate.boot.model.relational.Namespace;
 import org.hibernate.boot.spi.InFlightMetadataCollector;
 import org.hibernate.boot.spi.MetadataBuildingContext;
+import org.hibernate.bytecode.spi.BytecodeProvider;
 import org.hibernate.dialect.Dialect;
 import org.hibernate.dialect.aggregate.AggregateSupport;
 import org.hibernate.internal.util.ReflectHelper;
@@ -33,6 +33,7 @@ import org.hibernate.mapping.PersistentClass;
 import org.hibernate.mapping.Property;
 import org.hibernate.mapping.UserDefinedType;
 import org.hibernate.mapping.Value;
+import org.hibernate.metamodel.internal.EmbeddableHelper;
 import org.hibernate.sql.Template;
 import org.hibernate.type.BasicPluralType;
 import org.hibernate.type.BasicType;
@@ -195,12 +196,19 @@ public class AggregateComponentSecondPass implements SecondPass {
 			}
 			else {
 				final String[] componentNames = ReflectHelper.getRecordComponentNames( componentClass );
-				propertyMappingIndex = determinePropertyMappingIndex( componentNames );
+				propertyMappingIndex = EmbeddableHelper.determinePropertyMappingIndex( component.getPropertyNames(), componentNames );
 			}
 		}
 		else {
-			// At some point we could do some byte code analysis to determine the order based on a constructor
-			return;
+			if ( component.getInstantiator() == null ) {
+				return;
+			}
+			final String[] fieldNames = context.getBootstrapContext().getServiceRegistry().getService( BytecodeProvider.class )
+					.determineConstructorArgumentFieldAssignments( component.getInstantiator() );
+			if ( fieldNames == null ) {
+				return;
+			}
+			propertyMappingIndex = EmbeddableHelper.determinePropertyMappingIndex( component.getPropertyNames(), fieldNames );
 		}
 		final ArrayList<Column> orderedColumns = new ArrayList<>( userDefinedType.getColumnSpan() );
 		final List<Property> properties = component.getProperties();
@@ -210,8 +218,7 @@ public class AggregateComponentSecondPass implements SecondPass {
 			}
 		}
 		else {
-			for ( int newIndex = 0; newIndex < propertyMappingIndex.length; newIndex++ ) {
-				final int propertyIndex = propertyMappingIndex[newIndex];
+			for ( final int propertyIndex : propertyMappingIndex ) {
 				addColumns( orderedColumns, properties.get( propertyIndex ).getValue() );
 			}
 		}
@@ -233,17 +240,6 @@ public class AggregateComponentSecondPass implements SecondPass {
 		else {
 			orderedColumns.addAll( value.getColumns() );
 		}
-	}
-
-	private static int[] determinePropertyMappingIndex(String[] componentNames) {
-		final String[] sortedComponentNames = componentNames.clone();
-		final int[] index = new int[componentNames.length];
-		Arrays.sort( sortedComponentNames );
-		for ( int i = 0; i < componentNames.length; i++ ) {
-			final int newIndex = Arrays.binarySearch( sortedComponentNames, componentNames[i] );
-			index[newIndex] = i;
-		}
-		return index;
 	}
 
 	private void validateSupportedColumnTypes(String basePath, Component component) {

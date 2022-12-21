@@ -41,6 +41,7 @@ dependencies {
         runtime libs.byteBuddyAgent
         runtime libs.jandex
         runtime libs.classmate
+        runtime libs.asmAnalysis
 
         runtime jakartaLibs.jaxb
         runtime jakartaLibs.jaxbApi

@@ -31,6 +31,7 @@ ext {
 dependencies {
 	implementation project(':hibernate-core')
 	implementation libs.byteBuddy
+	implementation libs.asmAnalysis
 	implementation jakartaLibs.jaxbApi
 
 	implementation gradleApi()

@@ -6,6 +6,7 @@
  */
 package org.hibernate.bytecode.spi;
 
+import java.lang.reflect.Constructor;
 import java.util.Map;
 
 import org.hibernate.bytecode.enhance.spi.EnhancementContext;
@@ -66,6 +67,14 @@ public interface BytecodeProvider extends Service {
 	Enhancer getEnhancer(EnhancementContext enhancementContext);
 
 	/**
+	 * Returns a mapping from constructor parameter index to field name.
+	 * This is used to determine the persistent property that a constructor parameter is assigned to.
+	 *
+	 * @since 6.2
+	 */
+	String[] determineConstructorArgumentFieldAssignments(Constructor<?> instantiator);
+
+	/**
 	 * Some BytecodeProvider implementations will have classloader specific caching.
 	 * These caches are useful at runtime but need to be reset at least on SessionFactory shutdown
 	 * to prevent leaking the deployment classloader.
@@ -75,5 +84,4 @@ public interface BytecodeProvider extends Service {
 	 * This limitation will be removed in the future, when these providers will no longer be static.
 	 */
 	default void resetCaches() {}
-
 }

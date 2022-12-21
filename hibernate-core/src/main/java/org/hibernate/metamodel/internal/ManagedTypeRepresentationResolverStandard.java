@@ -9,6 +9,7 @@ package org.hibernate.metamodel.internal;
 
 import java.util.function.Supplier;
 
+import org.hibernate.bytecode.spi.BytecodeProvider;
 import org.hibernate.internal.util.ReflectHelper;
 import org.hibernate.mapping.Component;
 import org.hibernate.mapping.PersistentClass;
@@ -110,8 +111,17 @@ public class ManagedTypeRepresentationResolverStandard implements ManagedTypeRep
 				customInstantiator = new EmbeddableInstantiatorRecordStandard( bootDescriptor.getComponentClass() );
 			}
 			else {
-				customInstantiator = EmbeddableInstantiatorRecordIndirecting.of( bootDescriptor.getComponentClass() );
+				customInstantiator = EmbeddableInstantiatorRecordIndirecting.of( bootDescriptor.getComponentClass(), bootDescriptor.getPropertyNames() );
 			}
+		}
+		else if ( bootDescriptor.getInstantiator() != null ) {
+			bootDescriptor.sortProperties();
+			bootDescriptor.getPropertyNames();
+			customInstantiator = EmbeddableInstantiatorPojoIndirecting.of(
+					bootDescriptor.getPropertyNames(),
+					bootDescriptor.getInstantiator(),
+					creationContext.getBootstrapContext().getServiceRegistry().getService( BytecodeProvider.class )
+			);
 		}
 		else {
 			customInstantiator = null;

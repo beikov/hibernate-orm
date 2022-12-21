@@ -8,6 +8,7 @@ package org.hibernate.envers.configuration.internal.metadata;
 
 import java.util.Map;
 
+import org.hibernate.bytecode.spi.BytecodeProvider;
 import org.hibernate.envers.boot.model.AttributeContainer;
 import org.hibernate.envers.boot.registry.classloading.ClassLoaderAccessHelper;
 import org.hibernate.envers.boot.spi.EnversMetadataBuildingContext;
@@ -19,6 +20,7 @@ import org.hibernate.mapping.Component;
 import org.hibernate.mapping.Property;
 import org.hibernate.mapping.Value;
 import org.hibernate.metamodel.internal.EmbeddableCompositeUserTypeInstantiator;
+import org.hibernate.metamodel.internal.EmbeddableInstantiatorPojoIndirecting;
 import org.hibernate.metamodel.spi.EmbeddableInstantiator;
 import org.hibernate.resource.beans.spi.ManagedBeanRegistry;
 import org.hibernate.usertype.CompositeUserType;
@@ -68,6 +70,15 @@ public final class ComponentMetadataGenerator extends AbstractMetadataGenerator 
 					)
 					.getBeanInstance();
 			instantiator = new EmbeddableCompositeUserTypeInstantiator( compositeUserType );
+		}
+		else if ( propComponent.getInstantiator() != null ) {
+			instantiator = EmbeddableInstantiatorPojoIndirecting.of(
+					propComponent.getPropertyNames(),
+					propComponent.getInstantiator(),
+					getMetadataBuildingContext().getBootstrapContext()
+							.getServiceRegistry()
+							.getService( BytecodeProvider.class )
+			);
 		}
 		else {
 			instantiator = null;

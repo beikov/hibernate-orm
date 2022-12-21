@@ -6,6 +6,7 @@
  */
 package org.hibernate.mapping;
 
+import java.lang.reflect.Constructor;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -17,6 +18,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.hibernate.Internal;
 import org.hibernate.MappingException;
 import org.hibernate.Remove;
 import org.hibernate.boot.model.relational.Database;
@@ -69,6 +71,7 @@ public class Component extends SimpleValue implements MetaAttributable, Sortable
 	private Map<String,MetaAttribute> metaAttributes;
 
 	private Class<? extends EmbeddableInstantiator> customInstantiator;
+	private Constructor<?> instantiator;
 
 	// cache the status of the type
 	private volatile Type type;
@@ -614,6 +617,15 @@ public class Component extends SimpleValue implements MetaAttributable, Sortable
 		}
 	}
 
+	@Internal
+	public String[] getPropertyNames() {
+		final String[] propertyNames = new String[properties.size()];
+		for ( int i = 0; i < properties.size(); i++ ) {
+			propertyNames[i] = properties.get( i ).getName();
+		}
+		return propertyNames;
+	}
+
 	public static class StandardGenerationContextLocator
 			implements CompositeNestedGeneratedValueGenerator.GenerationContextLocator {
 		private final String entityName;
@@ -749,5 +761,13 @@ public class Component extends SimpleValue implements MetaAttributable, Sortable
 
 	public void setCustomInstantiator(Class<? extends EmbeddableInstantiator> customInstantiator) {
 		this.customInstantiator = customInstantiator;
+	}
+
+	public Constructor<?> getInstantiator() {
+		return instantiator;
+	}
+
+	public void setInstantiator(Constructor<?> instantiator) {
+		this.instantiator = instantiator;
 	}
 }

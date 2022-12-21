@@ -19,6 +19,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.hibernate.HibernateException;
 import org.hibernate.bytecode.enhance.internal.bytebuddy.EnhancerImpl;
@@ -53,6 +54,7 @@ import net.bytebuddy.NamingStrategy;
 import net.bytebuddy.description.NamedElement;
 import net.bytebuddy.description.method.MethodDescription;
 import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.dynamic.ClassFileLocator;
 import net.bytebuddy.dynamic.DynamicType;
 import net.bytebuddy.implementation.Implementation;
 import net.bytebuddy.implementation.MethodCall;
@@ -67,6 +69,16 @@ import net.bytebuddy.jar.asm.Opcodes;
 import net.bytebuddy.jar.asm.Type;
 import net.bytebuddy.matcher.ElementMatcher;
 import net.bytebuddy.matcher.ElementMatchers;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.tree.AbstractInsnNode;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.FieldInsnNode;
+import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.VarInsnNode;
+import org.objectweb.asm.tree.analysis.Analyzer;
+import org.objectweb.asm.tree.analysis.Frame;
+import org.objectweb.asm.tree.analysis.SourceInterpreter;
+import org.objectweb.asm.tree.analysis.SourceValue;
 
 public class BytecodeProviderImpl implements BytecodeProvider {
 
@@ -106,6 +118,7 @@ public class BytecodeProviderImpl implements BytecodeProvider {
 	private final ByteBuddyState byteBuddyState;
 
 	private final ByteBuddyProxyHelper byteBuddyProxyHelper;
+	private final Map<Constructor<?>, String[]> constructorFieldAssignments;
 
 	/**
 	 * Constructs a ByteBuddy BytecodeProvider instance which attempts to auto-detect the target JVM version
@@ -122,6 +135,7 @@ public class BytecodeProviderImpl implements BytecodeProvider {
 	public BytecodeProviderImpl(ClassFileVersion targetCompatibleJVM) {
 		this.byteBuddyState = new ByteBuddyState( targetCompatibleJVM );
 		this.byteBuddyProxyHelper = new ByteBuddyProxyHelper( byteBuddyState );
+		this.constructorFieldAssignments = new ConcurrentHashMap<>();
 	}
 
 	@Override
@@ -578,7 +592,7 @@ public class BytecodeProviderImpl implements BytecodeProvider {
 	private List<ForeignPackageClassInfo> createForeignPackageClassInfos(Class<?> clazz) {
 		final List<ForeignPackageClassInfo> foreignPackageClassInfos = new ArrayList<>();
 		Class<?> c = clazz.getSuperclass();
-		while (c != Object.class) {
+		while ( c != Object.class ) {
 			if ( !c.getPackageName().equals( clazz.getPackageName() ) ) {
 				foreignPackageClassInfos.add( new ForeignPackageClassInfo( c ) );
 			}
@@ -837,7 +851,8 @@ public class BytecodeProviderImpl implements BytecodeProvider {
 				MethodVisitor methodVisitor,
 				Implementation.Context implementationContext,
 				MethodDescription instrumentedMethod) {
-			final boolean persistentAttributeInterceptable = PersistentAttributeInterceptable.class.isAssignableFrom( clazz );
+			final boolean persistentAttributeInterceptable = PersistentAttributeInterceptable.class.isAssignableFrom(
+					clazz );
 			final boolean compositeOwner = CompositeOwner.class.isAssignableFrom( clazz );
 			Label currentLabel = null;
 			Label nextLabel = new Label();
@@ -975,7 +990,11 @@ public class BytecodeProviderImpl implements BytecodeProvider {
 							Opcodes.INVOKESTATIC,
 							Type.getInternalName( foreignPackageMember.getForeignPackageAccessor() ),
 							"set_" + setterMember.getName(),
-							Type.getMethodDescriptor( Type.getType( void.class ), Type.getType( clazz ), Type.getType( type ) ),
+							Type.getMethodDescriptor(
+									Type.getType( void.class ),
+									Type.getType( clazz ),
+									Type.getType( type )
+							),
 							false
 					);
 				}
@@ -1061,7 +1080,10 @@ public class BytecodeProviderImpl implements BytecodeProvider {
 
 						// Clean stack after the if block
 						methodVisitor.visitLabel( compositeTrackerEndLabel );
-						implementationContext.getFrameGeneration().same(methodVisitor, instrumentedMethod.getParameters().asTypeList());
+						implementationContext.getFrameGeneration().same(
+								methodVisitor,
+								instrumentedMethod.getParameters().asTypeList()
+						);
 					}
 					if ( persistentAttributeInterceptable ) {
 						// Load the owner
@@ -1125,7 +1147,10 @@ public class BytecodeProviderImpl implements BytecodeProvider {
 
 						// Clean stack after the if block
 						methodVisitor.visitLabel( instanceofEndLabel );
-						implementationContext.getFrameGeneration().same(methodVisitor, instrumentedMethod.getParameters().asTypeList());
+						implementationContext.getFrameGeneration().same(
+								methodVisitor,
+								instrumentedMethod.getParameters().asTypeList()
+						);
 					}
 
 					currentLabel = nextLabel;
@@ -1134,7 +1159,10 @@ public class BytecodeProviderImpl implements BytecodeProvider {
 			}
 			if ( currentLabel != null ) {
 				methodVisitor.visitLabel( currentLabel );
-				implementationContext.getFrameGeneration().same(methodVisitor, instrumentedMethod.getParameters().asTypeList());
+				implementationContext.getFrameGeneration().same(
+						methodVisitor,
+						instrumentedMethod.getParameters().asTypeList()
+				);
 			}
 			methodVisitor.visitInsn( Opcodes.RETURN );
 			return new Size( 4, instrumentedMethod.getStackSize() );
@@ -1318,8 +1346,181 @@ public class BytecodeProviderImpl implements BytecodeProvider {
 	}
 
 	@Override
+	public String[] determineConstructorArgumentFieldAssignments(Constructor<?> instantiator) {
+		String[] fieldAssignments = constructorFieldAssignments.get( instantiator );
+		if ( fieldAssignments == null ) {
+			fieldAssignments = new String[instantiator.getParameterCount()];
+			determineFieldAssignments( instantiator, fieldAssignments );
+			constructorFieldAssignments.put( instantiator, fieldAssignments );
+		}
+		return fieldAssignments;
+	}
+
+	private void determineFieldAssignments(Constructor<?> instantiator, String[] fieldAssignments) {
+		final Class<?> declaringClass = instantiator.getDeclaringClass();
+		final Class<?>[] parameterTypes = instantiator.getParameterTypes();
+		final int parameterStackSlots = parameterStackSlots( parameterTypes );
+		final String name = declaringClass.getName();
+		final Analyzer<SourceValue> sourceValueAnalyzer = new Analyzer<>( new SourceInterpreter() );
+		try (ClassFileLocator classFileLocator = ClassFileLocator.ForClassLoader.of(
+				declaringClass.getClassLoader()
+		)) {
+			final ClassFileLocator.Resolution resolution = classFileLocator.locate( name );
+			final ClassReader classReader = new ClassReader( resolution.resolve() );
+			final ClassNode classNode = new ClassNode();
+			classReader.accept( classNode, ClassReader.SKIP_DEBUG );
+			final MethodNode methodNode = getMethodNode( classNode, instantiator );
+			final Frame<SourceValue>[] frames = sourceValueAnalyzer.analyze(
+					Type.getInternalName( declaringClass ),
+					methodNode
+			);
+			int index = 0;
+			for ( AbstractInsnNode instruction : methodNode.instructions ) {
+				switch ( instruction.getOpcode() ) {
+					case Opcodes.PUTFIELD: {
+						final Frame<SourceValue> frame = frames[index];
+						final SourceValue fieldOwner = frame.getStack( frame.getStackSize() - 2 );
+						if ( fieldOwner.insns.size() != 1 ) {
+							// The put field target must come from a simple ALOAD
+							break;
+						}
+						final AbstractInsnNode fieldOwnerSourceInsn = fieldOwner.insns.iterator().next();
+						if ( !( fieldOwnerSourceInsn instanceof VarInsnNode ) || ( (VarInsnNode) fieldOwnerSourceInsn ).var != 0 ) {
+							// Var must be 0, which represents the "this" pointer
+							break;
+						}
+						final SourceValue fieldValue = frame.getStack( frame.getStackSize() - 1 );
+						if ( fieldValue.insns.size() != 1 ) {
+							// The put field source value must come from a simple LOAD
+							break;
+						}
+						final AbstractInsnNode fieldValueSourceInsn = fieldValue.insns.iterator().next();
+						if ( !( fieldValueSourceInsn instanceof VarInsnNode ) ) {
+							// The instruction for the value must be a simple LOAD
+							break;
+						}
+						final int stackSlot = ( (VarInsnNode) fieldValueSourceInsn ).var;
+						if ( stackSlot > parameterStackSlots ) {
+							break;
+						}
+						final int parameterIndex = stackSlotToParameterIndex( stackSlot, parameterTypes );
+						if ( parameterIndex < parameterTypes.length ) {
+							final FieldInsnNode fieldInsnNode = (FieldInsnNode) instruction;
+							fieldAssignments[parameterIndex] = fieldInsnNode.name;
+						}
+					}
+//					case Opcodes.INVOKEINTERFACE:
+//					case Opcodes.INVOKEVIRTUAL:
+//					case Opcodes.INVOKESPECIAL: {
+//						Frame frame = frames[index];
+//						if ("<init>".equals(methodName)) {
+//							Class<?> superclass = entityViewClass.getSuperclass();
+//							if (superclass != Object.class) {
+//								CtClass[] superParameterTypes = Descriptor.getParameterTypes(cp.getMethodrefType(methodCpIdx), pool);
+//								if (superParameterTypes.length != 0) {
+//									Class[] superParamTypes = new Class[superParameterTypes.length];
+//									for (int i = 0; i < superParameterTypes.length; i++) {
+//										if (superParameterTypes[i].isPrimitive()) {
+//											superParamTypes[i] = ReflectionUtils.getClass(superParameterTypes[i].getName());
+//										} else {
+//											superParamTypes[i] = entityViewClass.getClassLoader().loadClass(superParameterTypes[i].getName());
+//										}
+//									}
+//									Constructor<?> superConstructor = superclass.getDeclaredConstructor(superParamTypes);
+//									AttributeInfo[] superAttributes = analyzeParameterToAccessorMapping(superclass, superConstructor, fieldsToAccessors);
+//									// We assign the attributes from right to left and remap indexes from the super constructor to our parameter order
+//									int offset = frame.getTopIndex();
+//									for (int i = superAttributes.length - 1; i >= 0; i--) {
+//										AttributeInfo superAttribute = superAttributes[i];
+//										Integer origin;
+//										if (frame.getStack(offset) == Type.TOP) {
+//											offset--;
+//										}
+//										if (superAttribute != null && (origin = frame.getStackOrigin(offset)) != null) {
+//											parameterToAccessorMapping[origin - 1] = superAttribute;
+//										}
+//										offset--;
+//									}
+//								}
+//							}
+//						} else {
+//							Integer targetOrigin;
+//							Integer sourceOrigin;
+//							// Stack size must be at least 2 i.e. contain the this pointer and the argument for the setter
+//							if (frame.peek() == Type.TOP) {
+//								targetOrigin = frame.getTopIndex() > 1 ? frame.getStackOrigin(frame.getTopIndex() - 2) : null;
+//								sourceOrigin = frame.getStackOrigin(frame.getTopIndex() - 1);
+//							} else {
+//								targetOrigin = frame.getTopIndex() > 0 ? frame.getStackOrigin(frame.getTopIndex() - 1) : null;
+//								sourceOrigin = frame.getStackOrigin(frame.getTopIndex());
+//							}
+//							if (targetOrigin != null && sourceOrigin != null && targetOrigin == 0 && sourceOrigin <= parameterToAccessorMapping.length) {
+//								AttributeInfo attributeInfo = setterToAccessors.get(methodName);
+//								// We must check if this is the correct setter that is invoked
+//								if (attributeInfo != null && cp.getMethodrefType(methodCpIdx).equals(Descriptor.ofMethod(CtClass.voidType, new CtClass[]{ pool.get(attributeInfo.field.getType().getName()) }))) {
+//									parameterToAccessorMapping[sourceOrigin - 1] = attributeInfo;
+//								}
+//							}
+//						}
+//						break;
+//					}
+					default:
+						break;
+				}
+				index++;
+			}
+		}
+		catch (Exception e) {
+			throw new RuntimeException( e );
+		}
+	}
+
+	private MethodNode getMethodNode(ClassNode classNode, Constructor<?> constructor) {
+		final String descriptor = org.objectweb.asm.Type.getConstructorDescriptor( constructor );
+		for ( MethodNode method : classNode.methods ) {
+			if ( "<init>".equals( method.name ) && descriptor.equals( method.desc ) ) {
+				return method;
+			}
+		}
+		return null;
+	}
+
+	private static int stackSlotToParameterIndex(int stackSlot, Class<?>[] methodParameterTypes) {
+		for ( int i = 0; i < methodParameterTypes.length; i++ ) {
+			if ( stackSlot == 1 ) {
+				return i;
+			}
+			Class<?> parameterTypeClass = methodParameterTypes[i];
+			if ( parameterTypeClass == long.class || parameterTypeClass == double.class ) {
+				stackSlot -= 2;
+			}
+			else {
+				stackSlot--;
+			}
+		}
+
+		return -1;
+	}
+
+	private static int parameterStackSlots(Class<?>[] methodParameterTypes) {
+		int stackSlot = 0;
+		for ( int i = 0; i < methodParameterTypes.length; i++ ) {
+			Class<?> parameterTypeClass = methodParameterTypes[i];
+			if ( parameterTypeClass == long.class || parameterTypeClass == double.class ) {
+				stackSlot += 2;
+			}
+			else {
+				stackSlot++;
+			}
+		}
+
+		return stackSlot;
+	}
+
+	@Override
 	public void resetCaches() {
 		byteBuddyState.clearState();
+		constructorFieldAssignments.clear();
 	}
 
 }
