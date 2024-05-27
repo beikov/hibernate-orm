@@ -755,6 +755,11 @@ public abstract class BaseSqmToSqlAstConverter<T extends Statement> extends Base
 		return loadQueryInfluencers;
 	}
 
+	@Override
+	public boolean applyOnlyLoadByKeyFilters() {
+		return false;
+	}
+
 	public FromClauseIndex getFromClauseIndex() {
 		return (FromClauseIndex) getFromClauseAccess();
 	}
@@ -2817,6 +2822,7 @@ public abstract class BaseSqmToSqlAstConverter<T extends Statement> extends Base
 					tableGroup,
 					true,
 					getLoadQueryInfluencers().getEnabledFilters(),
+					false,
 					null,
 					this
 			);
@@ -3510,6 +3516,7 @@ public abstract class BaseSqmToSqlAstConverter<T extends Statement> extends Base
 				tableGroup,
 				true,
 				getLoadQueryInfluencers().getEnabledFilters(),
+				false,
 				null,
 				this
 		);
@@ -4655,6 +4662,7 @@ public abstract class BaseSqmToSqlAstConverter<T extends Statement> extends Base
 					tableGroup,
 					true,
 					getLoadQueryInfluencers().getEnabledFilters(),
+					false,
 					null,
 					this
 			);
@@ -4809,6 +4817,7 @@ public abstract class BaseSqmToSqlAstConverter<T extends Statement> extends Base
 					tableGroup,
 					true,
 					getLoadQueryInfluencers().getEnabledFilters(),
+					false,
 					null,
 					this
 			);
@@ -4953,6 +4962,7 @@ public abstract class BaseSqmToSqlAstConverter<T extends Statement> extends Base
 						tableGroup,
 						true,
 						getLoadQueryInfluencers().getEnabledFilters(),
+						false,
 						null,
 						this
 				);
@@ -7671,6 +7681,7 @@ public abstract class BaseSqmToSqlAstConverter<T extends Statement> extends Base
 					tableGroup,
 					true,
 					getLoadQueryInfluencers().getEnabledFilters(),
+					false,
 					null,
 					this
 			);
