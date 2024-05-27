@@ -30,6 +30,7 @@ import org.hibernate.metamodel.CollectionClassification;
 import org.hibernate.metamodel.mapping.AttributeMapping;
 import org.hibernate.metamodel.mapping.CollectionPart;
 import org.hibernate.metamodel.mapping.EntityIdentifierMapping;
+import org.hibernate.metamodel.mapping.EntityMappingType;
 import org.hibernate.metamodel.mapping.EntityValuedModelPart;
 import org.hibernate.metamodel.mapping.ForeignKeyDescriptor;
 import org.hibernate.metamodel.mapping.ModelPart;
@@ -68,6 +69,7 @@ import org.hibernate.sql.ast.tree.predicate.ComparisonPredicate;
 import org.hibernate.sql.ast.tree.predicate.InArrayPredicate;
 import org.hibernate.sql.ast.tree.predicate.InListPredicate;
 import org.hibernate.sql.ast.tree.predicate.InSubQueryPredicate;
+import org.hibernate.sql.ast.tree.predicate.PredicateContainer;
 import org.hibernate.sql.ast.tree.select.QueryPart;
 import org.hibernate.sql.ast.tree.select.QuerySpec;
 import org.hibernate.sql.ast.tree.select.SelectStatement;
@@ -709,16 +711,15 @@ public class LoaderSelectBuilder {
 	}
 
 	private void applyFiltering(
-			QuerySpec querySpec,
+			PredicateContainer predicateContainer,
 			TableGroup tableGroup,
 			Restrictable restrictable,
 			SqlAstCreationState astCreationState) {
 		restrictable.applyBaseRestrictions(
-				querySpec::applyPredicate,
+				predicateContainer::applyPredicate,
 				tableGroup,
 				true,
-				// HHH-16830 Session.find should apply filters only if specified on the filter definition
-				loadQueryInfluencers.getEnabledFiltersForFind(),
+				loadQueryInfluencers.getEnabledFilters(),
 				null,
 				astCreationState
 		);
@@ -963,9 +964,9 @@ public class LoaderSelectBuilder {
 						creationState
 				);
 
-				if ( fetch.getTiming() == FetchTiming.IMMEDIATE && isFetchablePluralAttributeMapping ) {
-					final PluralAttributeMapping pluralAttributeMapping = (PluralAttributeMapping) fetchable;
-					if ( joined ) {
+				if ( fetch.getTiming() == FetchTiming.IMMEDIATE && joined ) {
+					if ( isFetchablePluralAttributeMapping ) {
+						final PluralAttributeMapping pluralAttributeMapping = (PluralAttributeMapping) fetchable;
 						final TableGroup joinTableGroup = creationState.getFromClauseAccess()
 								.getTableGroup( fetchablePath );
 						final QuerySpec querySpec = creationState.getInflightQueryPart().getFirstQuerySpec();
@@ -979,6 +980,19 @@ public class LoaderSelectBuilder {
 								querySpec,
 								fetchablePath,
 								pluralAttributeMapping,
+								creationState
+						);
+					}
+					else if ( fetchable instanceof ToOneAttributeMapping ) {
+						final EntityMappingType entityType = ( (ToOneAttributeMapping) fetchable ).getEntityMappingType();
+						final FromClauseAccess fromClauseAccess = creationState.getFromClauseAccess();
+						final TableGroup joinTableGroup = fromClauseAccess.getTableGroup( fetchablePath );
+						final TableGroupJoin join = fromClauseAccess.getTableGroup( fetchParent.getNavigablePath() )
+								.findTableGroupJoin( joinTableGroup );
+						applyFiltering(
+								join,
+								joinTableGroup,
+								entityType,
 								creationState
 						);
 					}
