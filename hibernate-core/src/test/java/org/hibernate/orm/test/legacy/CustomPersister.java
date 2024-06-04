@@ -897,11 +897,6 @@ public class CustomPersister implements EntityPersister {
 	}
 
 	@Override
-	public boolean hasFilterForLoadByKey() {
-		return false;
-	}
-
-	@Override
 	public Iterable<UniqueKeyEntry> uniqueKeyEntries() {
 		return Collections.emptyList();
 	}

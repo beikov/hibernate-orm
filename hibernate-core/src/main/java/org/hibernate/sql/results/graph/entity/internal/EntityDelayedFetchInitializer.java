@@ -8,6 +8,7 @@ package org.hibernate.sql.results.graph.entity.internal;
 
 import java.util.function.BiConsumer;
 
+import org.hibernate.EntityFilterException;
 import org.hibernate.FetchNotFoundException;
 import org.hibernate.bytecode.enhance.spi.LazyPropertyInitializer;
 import org.hibernate.engine.spi.EntityHolder;
@@ -48,13 +49,14 @@ public class EntityDelayedFetchInitializer extends AbstractInitializer implement
 	private final boolean selectByUniqueKey;
 	private final DomainResultAssembler<?> identifierAssembler;
 	private final BasicResultAssembler<?> discriminatorAssembler;
+	private final DomainResultAssembler<?> targetIdResultPartAssembler;
 
 	// per-row state
 	private Object entityInstance;
 	private Object identifier;
 
 	/**
-	 * @deprecated Use {@link #EntityDelayedFetchInitializer(InitializerParent, NavigablePath, ToOneAttributeMapping, boolean, DomainResultAssembler, BasicResultAssembler)} instead.
+	 * @deprecated Use {@link #EntityDelayedFetchInitializer(InitializerParent, NavigablePath, ToOneAttributeMapping, boolean, DomainResultAssembler, BasicResultAssembler, DomainResultAssembler)} instead.
 	 */
 	@Deprecated(forRemoval = true)
 	public EntityDelayedFetchInitializer(
@@ -70,7 +72,8 @@ public class EntityDelayedFetchInitializer extends AbstractInitializer implement
 				referencedModelPart,
 				selectByUniqueKey,
 				identifierAssembler,
-				discriminatorAssembler
+				discriminatorAssembler,
+				null
 		);
 	}
 
@@ -80,7 +83,8 @@ public class EntityDelayedFetchInitializer extends AbstractInitializer implement
 			ToOneAttributeMapping referencedModelPart,
 			boolean selectByUniqueKey,
 			DomainResultAssembler<?> identifierAssembler,
-			BasicResultAssembler<?> discriminatorAssembler) {
+			BasicResultAssembler<?> discriminatorAssembler,
+			DomainResultAssembler<?> targetIdResultPartAssembler) {
 		// associations marked with `@NotFound` are ALWAYS eagerly fetched, unless we're resolving the concrete type
 		assert !referencedModelPart.hasNotFoundAction() || referencedModelPart.getEntityMappingType().isConcreteProxy();
 
@@ -91,6 +95,7 @@ public class EntityDelayedFetchInitializer extends AbstractInitializer implement
 		this.selectByUniqueKey = selectByUniqueKey;
 		this.identifierAssembler = identifierAssembler;
 		this.discriminatorAssembler = discriminatorAssembler;
+		this.targetIdResultPartAssembler = targetIdResultPartAssembler;
 	}
 
 	@Override
@@ -140,6 +145,15 @@ public class EntityDelayedFetchInitializer extends AbstractInitializer implement
 			}
 			else {
 				concreteDescriptor = entityPersister;
+			}
+			if ( targetIdResultPartAssembler != null ) {
+				if ( targetIdResultPartAssembler.assemble( rowProcessingState ) != null ) {
+					throw new EntityFilterException(
+							entityPersister.getEntityName(),
+							identifier,
+							referencedModelPart.getNavigableRole().toString()
+					);
+				}
 			}
 
 			final PersistenceContext persistenceContext = session.getPersistenceContextInternal();

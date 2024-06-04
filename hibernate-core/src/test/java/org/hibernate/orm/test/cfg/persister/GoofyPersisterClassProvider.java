@@ -760,11 +760,6 @@ public class GoofyPersisterClassProvider implements PersisterClassResolver {
 		}
 
 		@Override
-		public boolean hasFilterForLoadByKey() {
-			return false;
-		}
-
-		@Override
 		public Iterable<UniqueKeyEntry> uniqueKeyEntries() {
 			return Collections.emptyList();
 		}

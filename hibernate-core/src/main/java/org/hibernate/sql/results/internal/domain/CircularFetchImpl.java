@@ -211,7 +211,8 @@ public class CircularFetchImpl extends AbstractNonJoinedEntityFetch implements B
 				fetchable,
 				selectByUniqueKey,
 				resultAssembler,
-				discriminatorAssembler
+				discriminatorAssembler,
+				null
 		);
 	}
 

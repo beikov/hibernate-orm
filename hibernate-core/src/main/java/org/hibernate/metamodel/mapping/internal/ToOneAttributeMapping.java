@@ -249,7 +249,7 @@ public class ToOneAttributeMapping
 				stateArrayPosition,
 				fetchableIndex,
 				attributeMetadata,
-				adjustFetchTiming( mappedFetchTiming, bootValue, entityMappingType ),
+				adjustFetchTiming( mappedFetchTiming, bootValue ),
 				mappedFetchStyle,
 				declaringType,
 				propertyAccess
@@ -271,7 +271,7 @@ public class ToOneAttributeMapping
 		);
 		if ( bootValue instanceof ManyToOne ) {
 			final ManyToOne manyToOne = (ManyToOne) bootValue;
-			this.notFoundAction = determineNotFoundAction( ( (ManyToOne) bootValue ).getNotFoundAction(), entityMappingType );
+			this.notFoundAction = ( (ManyToOne) bootValue ).getNotFoundAction();
 			if ( manyToOne.isLogicalOneToOne() ) {
 				cardinality = Cardinality.LOGICAL_ONE_TO_ONE;
 			}
@@ -425,7 +425,7 @@ public class ToOneAttributeMapping
 			else {
 				this.bidirectionalAttributePath = SelectablePath.parse( oneToOne.getMappedByProperty() );
 			}
-			notFoundAction = determineNotFoundAction( null, entityMappingType );
+			notFoundAction = null;
 			isKeyTableNullable = isNullable();
 			isOptional = !bootValue.isConstrained();
 			isInternalLoadNullable = isNullable();
@@ -570,16 +570,6 @@ public class ToOneAttributeMapping
 		}
 	}
 
-	private NotFoundAction determineNotFoundAction(NotFoundAction notFoundAction, EntityMappingType entityMappingType) {
-		// When a filter exists that affects a singular association, we have to enable NotFound handling
-		// to force an exception if the filter would result in the entity not being found.
-		// If we silently just read null, this could lead to data loss on flush
-		if ( entityMappingType.getEntityPersister().hasFilterForLoadByKey() && notFoundAction == null ) {
-			return NotFoundAction.EXCEPTION;
-		}
-		return notFoundAction;
-	}
-
 	private static SelectablePath findBidirectionalOneToManyAttributeName(
 			String propertyPath,
 			ManagedMappingType declaringType,
@@ -649,17 +639,11 @@ public class ToOneAttributeMapping
 		return null;
 	}
 
-	private static FetchTiming adjustFetchTiming(
-			FetchTiming mappedFetchTiming,
-			ToOne bootValue,
-			EntityMappingType entityMappingType) {
+	private static FetchTiming adjustFetchTiming(FetchTiming mappedFetchTiming, ToOne bootValue) {
 		if ( bootValue instanceof ManyToOne ) {
 			if ( ( (ManyToOne) bootValue ).getNotFoundAction() != null ) {
 				return FetchTiming.IMMEDIATE;
 			}
-		}
-		if ( entityMappingType.getEntityPersister().hasFilterForLoadByKey() ) {
-			return FetchTiming.IMMEDIATE;
 		}
 		return mappedFetchTiming;
 	}
@@ -1984,7 +1968,20 @@ public class ToOneAttributeMapping
 		assert !( lhs instanceof PluralTableGroup );
 
 		final FromClauseAccess fromClauseAccess = creationState.getFromClauseAccess();
-		final SqlAstJoinType joinType = determineSqlJoinType( lhs, requestedJoinType, fetched );
+		final boolean affectedByFilters = getAssociatedEntityMappingType().isAffectedByEnabledFilters(
+				creationState.getLoadQueryInfluencers(),
+				creationState.applyOnlyLoadByKeyFilters()
+		);
+		final SqlAstJoinType joinType;
+		if ( requestedJoinType != null ) {
+			joinType = requestedJoinType;
+		}
+		else {
+			final SqlAstJoinType baseJoinType = determineSqlJoinType( lhs, requestedJoinType, fetched );
+			joinType = baseJoinType == SqlAstJoinType.LEFT || affectedByFilters
+					? SqlAstJoinType.LEFT
+					: baseJoinType;
+		}
 
 		// If a parent is a collection part, there is no custom predicate and the join is INNER or LEFT
 		// we check if this attribute is the map key property to reuse the existing index table group
@@ -2098,7 +2095,7 @@ public class ToOneAttributeMapping
 
 					// Note specifically we only apply `@Filter` restrictions that are applyToLoadByKey = true
 					// to make the behavior consistent with lazy loading of an association
-					if ( getAssociatedEntityMappingType().getEntityPersister().hasFilterForLoadByKey() ) {
+					if ( affectedByFilters ) {
 						getAssociatedEntityMappingType().applyBaseRestrictions(
 								join::applyPredicate,
 								tableGroup,
