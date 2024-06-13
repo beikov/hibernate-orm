@@ -26,6 +26,7 @@ import org.hibernate.metamodel.MappingMetamodel;
 import org.hibernate.metamodel.mapping.BasicValuedMapping;
 import org.hibernate.metamodel.mapping.Bindable;
 import org.hibernate.metamodel.mapping.CollectionPart;
+import org.hibernate.metamodel.mapping.EmbeddableValuedModelPart;
 import org.hibernate.metamodel.mapping.EntityAssociationMapping;
 import org.hibernate.metamodel.mapping.EntityIdentifierMapping;
 import org.hibernate.metamodel.mapping.EntityMappingType;
@@ -35,6 +36,7 @@ import org.hibernate.metamodel.mapping.MappingModelExpressible;
 import org.hibernate.metamodel.mapping.ModelPart;
 import org.hibernate.metamodel.mapping.ModelPartContainer;
 import org.hibernate.metamodel.mapping.PluralAttributeMapping;
+import org.hibernate.metamodel.mapping.internal.ToOneAttributeMapping;
 import org.hibernate.query.IllegalQueryOperationException;
 import org.hibernate.query.IllegalSelectQueryException;
 import org.hibernate.query.Order;
@@ -73,8 +75,10 @@ import org.hibernate.query.sqm.tree.select.SqmSortSpecification;
 import org.hibernate.spi.NavigablePath;
 import org.hibernate.sql.ast.Clause;
 import org.hibernate.sql.ast.SqlTreeCreationException;
+import org.hibernate.sql.ast.tree.expression.Expression;
 import org.hibernate.sql.ast.tree.expression.JdbcParameter;
 import org.hibernate.sql.ast.tree.from.TableGroup;
+import org.hibernate.sql.ast.tree.predicate.NullnessPredicate;
 import org.hibernate.sql.exec.internal.JdbcParameterBindingImpl;
 import org.hibernate.sql.exec.internal.JdbcParameterBindingsImpl;
 import org.hibernate.sql.exec.spi.JdbcParameterBindings;
@@ -85,6 +89,8 @@ import org.hibernate.type.descriptor.java.JavaType;
 import org.hibernate.type.internal.BasicTypeImpl;
 import org.hibernate.type.internal.ConvertedBasicTypeImpl;
 import org.hibernate.type.spi.TypeConfiguration;
+
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import static org.hibernate.internal.util.NullnessUtil.castNonNull;
 import static org.hibernate.query.sqm.tree.jpa.ParameterCollector.collectParameters;
@@ -178,6 +184,36 @@ public class SqmUtil {
 			}
 		}
 		return modelPartContainer;
+	}
+
+	/**
+	 * Returns the {@link EmbeddableValuedModelPart} representing the foreign key of a {@link ToOneAttributeMapping}
+	 * where {@link ToOneAttributeMapping#isFkOptimizationAllowed()} is {@code true}, or {@code null}.
+	 * This method is useful for applying null checks for other parts of a composite foreign key,
+	 * when part of an association foreign key is accessed.
+	 */
+	public static @Nullable EmbeddableValuedModelPart getForeignKeyEmbeddableModelPart(
+			TableGroup parentTableGroup,
+			ModelPartContainer parentModelPart,
+			SqmToSqlAstConverter sqlAstCreationState
+	) {
+		EmbeddableValuedModelPart rootEmbeddableModelPart = null;
+		while ( parentModelPart instanceof EmbeddableValuedModelPart ) {
+			rootEmbeddableModelPart = (EmbeddableValuedModelPart) parentModelPart;
+			parentTableGroup = sqlAstCreationState.getFromClauseAccess().getTableGroup(
+					parentTableGroup.getNavigablePath().getParent()
+			);
+			parentModelPart = parentTableGroup.getModelPart();
+		}
+		if ( rootEmbeddableModelPart != null && parentModelPart instanceof ToOneAttributeMapping ) {
+			final String propertyName = rootEmbeddableModelPart.getPartName();
+			final ToOneAttributeMapping toOneAttributeMapping = (ToOneAttributeMapping) parentModelPart;
+			if ( toOneAttributeMapping.isFkOptimizationAllowed()
+					&& toOneAttributeMapping.getTargetKeyPropertyNames().contains( propertyName ) ) {
+				return rootEmbeddableModelPart;
+			}
+		}
+		return null;
 	}
 
 	private static CollectionPart getCollectionPart(PluralAttributeMapping attribute, NavigablePath path) {

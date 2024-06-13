@@ -786,6 +786,11 @@ public abstract class BaseSqmToSqlAstConverter<T extends Statement> extends Base
 		return currentSqmQueryPart;
 	}
 
+	@Override
+	public void addAdditionalPredicate(Predicate predicate) {
+		additionalRestrictions = combinePredicates( additionalRestrictions, predicate );
+	}
+
 	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 	// Statements
 

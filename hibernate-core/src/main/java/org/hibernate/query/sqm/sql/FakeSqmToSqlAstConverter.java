@@ -88,6 +88,11 @@ public class FakeSqmToSqlAstConverter extends BaseSemanticQueryWalker implements
 	// SqmToSqlAstConverter
 
 	@Override
+	public void addAdditionalPredicate(Predicate predicate) {
+		// No-op
+	}
+
+	@Override
 	public Stack<Clause> getCurrentClauseStack() {
 		return null;
 	}

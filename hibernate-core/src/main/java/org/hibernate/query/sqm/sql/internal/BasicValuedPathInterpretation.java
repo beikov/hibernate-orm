@@ -12,10 +12,14 @@ import java.util.function.Consumer;
 
 import org.hibernate.metamodel.MappingMetamodel;
 import org.hibernate.metamodel.mapping.BasicValuedModelPart;
+import org.hibernate.metamodel.mapping.CompositeIdentifierMapping;
+import org.hibernate.metamodel.mapping.EmbeddableValuedModelPart;
 import org.hibernate.metamodel.mapping.EntityMappingType;
 import org.hibernate.metamodel.mapping.MappingType;
 import org.hibernate.metamodel.mapping.ModelPart;
 import org.hibernate.metamodel.mapping.ModelPartContainer;
+import org.hibernate.metamodel.mapping.internal.EmbeddedCollectionPart;
+import org.hibernate.metamodel.mapping.internal.ToOneAttributeMapping;
 import org.hibernate.metamodel.model.domain.EntityDomainType;
 import org.hibernate.persister.entity.EntityPersister;
 import org.hibernate.query.sqm.StrictJpaComplianceViolation;
@@ -31,10 +35,12 @@ import org.hibernate.sql.ast.tree.expression.Expression;
 import org.hibernate.sql.ast.tree.expression.SqlSelectionExpression;
 import org.hibernate.sql.ast.tree.from.TableGroup;
 import org.hibernate.sql.ast.tree.from.TableReference;
+import org.hibernate.sql.ast.tree.predicate.NullnessPredicate;
 import org.hibernate.sql.ast.tree.update.Assignable;
 
 import static jakarta.persistence.metamodel.Type.PersistenceType.ENTITY;
 import static org.hibernate.internal.util.NullnessUtil.castNonNull;
+import static org.hibernate.query.sqm.internal.SqmUtil.getForeignKeyEmbeddableModelPart;
 import static org.hibernate.query.sqm.internal.SqmUtil.getTargetMappingIfNeeded;
 
 /**
@@ -110,6 +116,28 @@ public class BasicValuedPathInterpretation<T> extends AbstractSqmPathInterpretat
 				mapping,
 				mapping.getContainingTableExpression()
 		);
+		final EmbeddableValuedModelPart foreignKeyEmbeddableModelPart = getForeignKeyEmbeddableModelPart(
+				tableGroup,
+				modelPartContainer,
+				sqlAstCreationState
+		);
+		if ( foreignKeyEmbeddableModelPart != null ) {
+			// We only get here if this is a basic path referring to part of a composite foreign key.
+			// Since an association is null if one of the parts is null,
+			// it is vital to check nullness of other foreign key parts when referring to one part.
+			foreignKeyEmbeddableModelPart.forEachSelectable(
+					(selectionIndex, selectableMapping) -> {
+						if ( !selectableMapping.getSelectionExpression().equals( mapping.getSelectionExpression() ) ) {
+							final Expression expression = sqlAstCreationState.getSqlExpressionResolver()
+									.resolveSqlExpression(
+											tableReference,
+											selectableMapping
+									);
+							sqlAstCreationState.addAdditionalPredicate( new NullnessPredicate( expression, true ) );
+						}
+					}
+			);
+		}
 
 		final Expression expression = sqlAstCreationState.getSqlExpressionResolver().resolveSqlExpression(
 				tableReference,
