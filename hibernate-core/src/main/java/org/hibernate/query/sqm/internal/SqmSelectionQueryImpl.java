@@ -31,6 +31,9 @@ import org.hibernate.engine.spi.SharedSessionContractImplementor;
 import org.hibernate.graph.spi.AppliedGraph;
 import org.hibernate.internal.util.collections.IdentitySet;
 import org.hibernate.query.BindableType;
+import org.hibernate.query.KeyedPage;
+import org.hibernate.query.Order;
+import org.hibernate.query.Page;
 import org.hibernate.query.QueryParameter;
 import org.hibernate.query.criteria.internal.NamedCriteriaQueryMementoImpl;
 import org.hibernate.query.hql.internal.NamedHqlQueryMementoImpl;
@@ -45,6 +48,7 @@ import org.hibernate.query.spi.QueryOptions;
 import org.hibernate.query.spi.QueryParameterBindings;
 import org.hibernate.query.spi.ScrollableResultsImplementor;
 import org.hibernate.query.spi.SelectQueryPlan;
+import org.hibernate.query.sqm.SqmQuerySource;
 import org.hibernate.query.sqm.SqmSelectionQuery;
 import org.hibernate.query.sqm.internal.SqmInterpretationsKey.InterpretationsKeySource;
 import org.hibernate.query.sqm.spi.SqmSelectionQueryImplementor;
@@ -69,9 +73,12 @@ import static org.hibernate.jpa.LegacySpecHints.HINT_JAVAEE_CACHE_RETRIEVE_MODE;
 import static org.hibernate.jpa.LegacySpecHints.HINT_JAVAEE_CACHE_STORE_MODE;
 import static org.hibernate.jpa.SpecHints.HINT_SPEC_CACHE_RETRIEVE_MODE;
 import static org.hibernate.jpa.SpecHints.HINT_SPEC_CACHE_STORE_MODE;
+import static org.hibernate.query.KeyedPage.KeyInterpretation.KEY_OF_FIRST_ON_NEXT_PAGE;
 import static org.hibernate.query.spi.SqlOmittingQueryOptions.omitSqlQueryOptions;
+import static org.hibernate.query.sqm.internal.KeyBasedPagination.paginate;
 import static org.hibernate.query.sqm.internal.SqmInterpretationsKey.createInterpretationsKey;
 import static org.hibernate.query.sqm.internal.SqmUtil.isSelectionAssignableToResultType;
+import static org.hibernate.query.sqm.tree.SqmCopyContext.noParamCopyContext;
 
 /**
  * @author Steve Ebersole
@@ -178,6 +185,55 @@ public class SqmSelectionQueryImpl<R> extends AbstractSqmSelectionQuery<R>
 
 		this.tupleMetadata = buildTupleMetadata( sqm, expectedResultType );
 	}
+
+	<E> SqmSelectionQueryImpl(AbstractSqmSelectionQuery<?> original, KeyedPage<E> keyedPage) {
+		super( original );
+
+		final Page page = keyedPage.getPage();
+		final List<Comparable<?>> key = keyedPage.getKey();
+		final List<Order<? super E>> keyDefinition = keyedPage.getKeyDefinition();
+		final List<Order<? super E>> appliedKeyDefinition =
+				keyedPage.getKeyInterpretation() == KEY_OF_FIRST_ON_NEXT_PAGE
+						? Order.reverse( keyDefinition ) : keyDefinition;
+
+		//noinspection unchecked
+		this.sqm = (SqmSelectStatement<R>) paginate(
+				appliedKeyDefinition,
+				key,
+				// Change the query source to CRITERIA, because we will change the query and introduce parameters
+				(SqmSelectStatement<KeyedResult<E>>) original.getSqmStatement()
+						.copy( noParamCopyContext( SqmQuerySource.CRITERIA ) ),
+				original.getSqmStatement().nodeBuilder()
+		);
+		this.hql = CRITERIA_HQL_STRING;
+
+		this.domainParameterXref = DomainParameterXref.from( sqm );
+		this.parameterMetadata = domainParameterXref.hasParameters()
+				? new ParameterMetadataImpl( domainParameterXref.getQueryParameters() )
+				: ParameterMetadataImpl.EMPTY;
+
+		// Just use the original parameter bindings since this object is never going to be mutated
+		this.parameterBindings = original.getQueryParameterBindings();
+//		this.parameterBindings = parameterMetadata.createBindings( original.getSession().getSessionFactory() );
+
+		// Parameters might be created through HibernateCriteriaBuilder.value which we need to bind here
+		for ( SqmParameter<?> sqmParameter : domainParameterXref.getParameterResolutions().getSqmParameters() ) {
+			if ( sqmParameter instanceof SqmJpaCriteriaParameterWrapper<?> ) {
+				bindCriteriaParameter( (SqmJpaCriteriaParameterWrapper<?>) sqmParameter );
+			}
+		}
+
+		//noinspection unchecked
+		this.expectedResultType = (Class<R>) KeyedResult.class;
+		this.resultType = determineResultType( sqm, expectedResultType );
+		this.tupleMetadata = null;
+
+		setMaxResults( page.getMaxResults() + 1 );
+		if ( key == null ) {
+			setFirstResult( page.getFirstResult() );
+		}
+	}
+
 
 	private static Class<?> determineResultType(SqmSelectStatement<?> sqm, Class<?> expectedResultType) {
 		final List<SqmSelection<?>> selections = sqm.getQuerySpec().getSelectClause().getSelections();
