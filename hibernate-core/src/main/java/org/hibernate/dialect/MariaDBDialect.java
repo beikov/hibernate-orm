@@ -9,6 +9,8 @@ import java.sql.SQLException;
 
 import org.hibernate.boot.model.FunctionContributions;
 import org.hibernate.boot.model.TypeContributions;
+import org.hibernate.dialect.aggregate.AggregateSupport;
+import org.hibernate.dialect.aggregate.MySQLAggregateSupport;
 import org.hibernate.dialect.function.CommonFunctionFactory;
 import org.hibernate.dialect.identity.IdentityColumnSupport;
 import org.hibernate.dialect.identity.MariaDBIdentityColumnSupport;
@@ -19,6 +21,7 @@ import org.hibernate.engine.jdbc.env.spi.IdentifierCaseStrategy;
 import org.hibernate.engine.jdbc.env.spi.IdentifierHelper;
 import org.hibernate.engine.jdbc.env.spi.IdentifierHelperBuilder;
 import org.hibernate.engine.spi.SessionFactoryImplementor;
+import org.hibernate.query.sqm.CastType;
 import org.hibernate.service.ServiceRegistry;
 import org.hibernate.sql.ast.SqlAstTranslator;
 import org.hibernate.sql.ast.SqlAstTranslatorFactory;
@@ -123,6 +126,11 @@ public class MariaDBDialect extends MySQLDialect {
 	}
 
 	@Override
+	public AggregateSupport getAggregateSupport() {
+		return MySQLAggregateSupport.LONGTEXT_INSTANCE;
+	}
+
+	@Override
 	protected void registerKeyword(String word) {
 		// The MariaDB driver reports that "STRING" is a keyword, but
 		// it's not a reserved word, and a column may be named STRING
@@ -156,7 +164,7 @@ public class MariaDBDialect extends MySQLDialect {
 	@Override
 	public void contributeTypes(TypeContributions typeContributions, ServiceRegistry serviceRegistry) {
 		final JdbcTypeRegistry jdbcTypeRegistry = typeContributions.getTypeConfiguration().getJdbcTypeRegistry();
-		// Make sure we register the JSON type descriptor before calling super, because MariaDB does not need casting
+		// Make sure we register the JSON type descriptor before calling super, because MariaDB needs special casting
 		jdbcTypeRegistry.addDescriptorIfAbsent( SqlTypes.JSON, JsonJdbcType.INSTANCE );
 		jdbcTypeRegistry.addTypeConstructorIfAbsent( JsonArrayJdbcTypeConstructor.INSTANCE );
 
@@ -164,6 +172,13 @@ public class MariaDBDialect extends MySQLDialect {
 		if ( getVersion().isSameOrAfter( 10, 7 ) ) {
 			jdbcTypeRegistry.addDescriptorIfAbsent( VarcharUUIDJdbcType.INSTANCE );
 		}
+	}
+
+	@Override
+	public String castPattern(CastType from, CastType to) {
+		return to == CastType.JSON
+				? "json_extract(?1,'$')"
+				: super.castPattern( from, to );
 	}
 
 	@Override
