@@ -1,6 +1,10 @@
 #! /bin/bash
 
-if command -v podman > /dev/null; then
+if command -v docker > /dev/null; then
+  CONTAINER_CLI=$(command -v docker)
+  HEALTCHECK_PATH="{{.State.Health.Status}}"
+  PRIVILEGED_CLI=""
+else
   CONTAINER_CLI=$(command -v podman)
   HEALTCHECK_PATH="{{.State.Healthcheck.Status}}"
   # Only use sudo for podman
@@ -9,10 +13,6 @@ if command -v podman > /dev/null; then
   else
     PRIVILEGED_CLI=""
   fi
-else
-  CONTAINER_CLI=$(command -v docker)
-  HEALTCHECK_PATH="{{.State.Health.Status}}"
-  PRIVILEGED_CLI=""
 fi
 
 mysql() {
@@ -489,7 +489,7 @@ oracle_setup() {
         echo "Waiting for Oracle to start..."
         sleep 5;
         # On WSL, health-checks intervals don't work for Podman, so run them manually
-        if command -v podman > /dev/null; then
+        if ! command -v docker > /dev/null; then
           $PRIVILEGED_CLI $CONTAINER_CLI healthcheck run oracle > /dev/null
         fi
         HEALTHSTATUS="`$PRIVILEGED_CLI $CONTAINER_CLI inspect -f $HEALTCHECK_PATH oracle`"
@@ -569,7 +569,7 @@ oracle_free_setup() {
         echo "Waiting for Oracle Free to start..."
         sleep 5;
         # On WSL, health-checks intervals don't work for Podman, so run them manually
-        if command -v podman > /dev/null; then
+        if ! command -v docker > /dev/null; then
           $PRIVILEGED_CLI $CONTAINER_CLI healthcheck run oracle > /dev/null
         fi
         HEALTHSTATUS="`$PRIVILEGED_CLI $CONTAINER_CLI inspect -f $HEALTCHECK_PATH oracle`"
@@ -733,6 +733,21 @@ oracle() {
   oracle_23
 }
 
+oracle_18() {
+    $PRIVILEGED_CLI $CONTAINER_CLI rm -f oracle || true
+    disable_userland_proxy
+    # We need to use the defaults
+    # SYSTEM/Oracle18
+    $PRIVILEGED_CLI $CONTAINER_CLI run --name oracle -d -p 1521:1521 -e ORACLE_PASSWORD=Oracle18 \
+       --cap-add cap_net_raw \
+       --health-cmd healthcheck.sh \
+       --health-interval 5s \
+       --health-timeout 5s \
+       --health-retries 10 \
+       ${DB_IMAGE_ORACLE_21:-docker.io/gvenzl/oracle-xe:18.4.0}
+    oracle_setup
+}
+
 oracle_21() {
     $PRIVILEGED_CLI $CONTAINER_CLI rm -f oracle || true
     disable_userland_proxy
@@ -765,7 +780,7 @@ oracle_23() {
 hana() {
     temp_dir=$(mktemp -d)
     echo '{"master_password" : "H1bernate_test"}' >$temp_dir/password.json
-    chmod 777 -R $temp_dir
+    chmod -R 777 $temp_dir
     $PRIVILEGED_CLI $CONTAINER_CLI rm -f hana || true
     $PRIVILEGED_CLI $CONTAINER_CLI run -d --name hana -p 39013:39013 -p 39017:39017 -p 39041-39045:39041-39045 -p 1128-1129:1128-1129 -p 59013-59014:59013-59014 \
       --memory=8g \
@@ -775,7 +790,7 @@ hana() {
       --sysctl kernel.shmmni=4096 \
       --sysctl kernel.shmall=8388608 \
       -v $temp_dir:/config:Z \
-      ${DB_IMAGE_HANA:-docker.io/saplabs/hanaexpress:2.00.072.00.20231123.1} \
+      ${DB_IMAGE_HANA:-docker.io/saplabs/hanaexpress:2.00.076.00.20240701.1} \
       --passwords-url file:///config/password.json \
       --agree-to-sap-license
     # Give the container some time to start
