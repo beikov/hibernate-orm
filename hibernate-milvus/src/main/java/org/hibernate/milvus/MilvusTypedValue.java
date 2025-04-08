@@ -1,0 +1,17 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ * Copyright Red Hat Inc. and Hibernate Authors
+ */
+package org.hibernate.milvus;
+
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
+
+
+@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.WRAPPER_OBJECT, property = "@type")
+@JsonSubTypes({
+		@JsonSubTypes.Type(value = MilvusStringValue.class),
+		@JsonSubTypes.Type(value = MilvusParameterValue.class),
+})
+public sealed interface MilvusTypedValue permits MilvusParameterValue, MilvusStringValue {
+}
