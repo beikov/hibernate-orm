@@ -9,6 +9,7 @@ import org.hibernate.query.SemanticException;
 import org.hibernate.query.sqm.NodeBuilder;
 import org.hibernate.query.sqm.SemanticQueryWalker;
 import org.hibernate.query.sqm.tree.SqmCopyContext;
+import org.hibernate.query.sqm.tree.SqmRenderContext;
 import org.hibernate.query.sqm.tree.domain.SqmPluralValuedSimplePath;
 import org.hibernate.query.sqm.tree.expression.SqmExpression;
 
@@ -83,13 +84,13 @@ public class SqmMemberOfPredicate extends AbstractNegatableSqmPredicate {
 	}
 
 	@Override
-	public void appendHqlString(StringBuilder hql) {
-		leftHandExpression.appendHqlString( hql );
+	public void appendHqlString(StringBuilder hql, SqmRenderContext context) {
+		leftHandExpression.appendHqlString( hql, context );
 		if ( isNegated() ) {
 			hql.append( " not" );
 		}
 		hql.append( " member of " );
-		pluralPath.appendHqlString( hql );
+		pluralPath.appendHqlString( hql, context );
 	}
 
 	@Override

@@ -5,6 +5,7 @@
 package org.hibernate.query.sqm.tree.domain;
 
 import org.hibernate.metamodel.model.domain.SingularPersistentAttribute;
+import org.hibernate.query.sqm.tree.SqmRenderContext;
 import org.hibernate.spi.NavigablePath;
 import org.hibernate.query.sqm.NodeBuilder;
 import org.hibernate.query.sqm.SqmPathSource;
@@ -34,9 +35,9 @@ public abstract class AbstractSqmSimplePath<T> extends AbstractSqmPath<T> implem
 	}
 
 	@Override
-	public void appendHqlString(StringBuilder hql) {
+	public void appendHqlString(StringBuilder hql, SqmRenderContext context) {
 		if ( getLhs() != null ) {
-			getLhs().appendHqlString( hql );
+			getLhs().appendHqlString( hql, context );
 			hql.append( '.' );
 		}
 		hql.append( getReferencedPathSource().getPathName() );
