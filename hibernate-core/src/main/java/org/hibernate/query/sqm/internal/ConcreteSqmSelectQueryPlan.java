@@ -455,7 +455,8 @@ public class ConcreteSqmSelectQueryPlan<R> implements SelectQueryPlan<R> {
 		return interpreter.interpret( context, executionContext, localCopy, jdbcParameterBindings );
 	}
 
-	private JdbcParameterBindings createJdbcParameterBindings(CacheableSqmInterpretation<SelectStatement, JdbcOperationQuerySelect> sqmInterpretation, DomainQueryExecutionContext executionContext) {
+	// For Hibernate Reactive
+	protected JdbcParameterBindings createJdbcParameterBindings(CacheableSqmInterpretation<SelectStatement, JdbcOperationQuerySelect> sqmInterpretation, DomainQueryExecutionContext executionContext) {
 		return SqmUtil.createJdbcParameterBindings(
 				executionContext.getQueryParameterBindings(),
 				domainParameterXref,
@@ -471,7 +472,8 @@ public class ConcreteSqmSelectQueryPlan<R> implements SelectQueryPlan<R> {
 		);
 	}
 
-	private static CacheableSqmInterpretation<SelectStatement, JdbcOperationQuerySelect> buildInterpretation(
+	// For Hibernate Reactive
+	protected static CacheableSqmInterpretation<SelectStatement, JdbcOperationQuerySelect> buildInterpretation(
 			SqmSelectStatement<?> sqm,
 			DomainParameterXref domainParameterXref,
 			DomainQueryExecutionContext executionContext,

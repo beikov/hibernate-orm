@@ -512,4 +512,9 @@ public class TableBasedSoftDeleteHandler
 	protected Function<SharedSessionContractImplementor, String> getSessionUidAccess() {
 		return sessionUidAccess;
 	}
+
+	// For Hibernate Reactive
+	protected @Nullable JdbcParameter getSessionUidParameter() {
+		return sessionUidParameter;
+	}
 }

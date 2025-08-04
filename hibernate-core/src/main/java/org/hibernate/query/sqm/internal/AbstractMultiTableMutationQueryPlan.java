@@ -38,6 +38,11 @@ public abstract class AbstractMultiTableMutationQueryPlan<S extends SqmDmlStatem
 	@Override
 	public int executeUpdate(DomainQueryExecutionContext context) {
 		BulkOperationCleanupAction.schedule( context.getSession(), statement );
+		return handler.execute( getJdbcParameterBindings( context ), context );
+	}
+
+	// For Hibernate Reactive
+	protected JdbcParameterBindings getJdbcParameterBindings(DomainQueryExecutionContext context) {
 		MultiTableHandler localCopy = handler;
 		JdbcParameterBindings jdbcParameterBindings = null;
 
@@ -100,7 +105,7 @@ public abstract class AbstractMultiTableMutationQueryPlan<S extends SqmDmlStatem
 		if ( jdbcParameterBindings == null ) {
 			jdbcParameterBindings = localCopy.createJdbcParameterBindings( context );
 		}
-		return localCopy.execute( jdbcParameterBindings, context );
+		return jdbcParameterBindings;
 	}
 
 }

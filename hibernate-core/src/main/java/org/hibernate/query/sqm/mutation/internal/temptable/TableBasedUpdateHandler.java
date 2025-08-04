@@ -736,4 +736,9 @@ public class TableBasedUpdateHandler
 	protected Function<SharedSessionContractImplementor, String> getSessionUidAccess() {
 		return sessionUidAccess;
 	}
+
+	// For Hibernate reactive
+	protected @Nullable JdbcParameter getSessionUidParameter() {
+		return sessionUidParameter;
+	}
 }

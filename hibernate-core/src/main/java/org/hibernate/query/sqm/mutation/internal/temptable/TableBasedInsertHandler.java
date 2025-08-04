@@ -1325,4 +1325,8 @@ public class TableBasedInsertHandler extends AbstractMutationHandler implements 
 		return forceDropAfterUse ? AfterUseAction.DROP : temporaryTableStrategy.getTemporaryTableAfterUseAction();
 	}
 
+	// For Hibernate Reactive
+	protected @Nullable JdbcParameter getSessionUidParameter() {
+		return sessionUidParameter;
+	}
 }
