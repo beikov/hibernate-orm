@@ -14,6 +14,7 @@ dependencies {
     api project( ':hibernate-core' )
 
     compileOnly jdbcLibs.mssql
+    compileOnly libs.checkerFramework
 
     testImplementation project( ':hibernate-testing' )
     testImplementation project( path: ':hibernate-core', configuration: 'tests' )
