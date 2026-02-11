@@ -126,6 +126,31 @@ public class EntitySelectFetchInitializer<Data extends EntitySelectFetchInitiali
 	}
 
 	@Override
+	public AsyncMode getAsyncMode() {
+		return isPartOfKey || parent.isEmbeddableInitializer() ? AsyncMode.BEFORE_RESOLVE : AsyncMode.AFTER_RESOLVE;
+	}
+
+	@Override
+	public BlockingRunnable<Data> resolveInstanceAsync(Data data) {
+		if ( data.getState() == State.KEY_RESOLVED ) {
+			final var rowProcessingState = data.getRowProcessingState();
+			final Object identifier = keyAssembler.assemble( rowProcessingState );
+			data.entityIdentifier = identifier;
+			if ( identifier == null ) {
+				data.setState( State.MISSING );
+				data.setInstance( null );
+				return null;
+			}
+			else {
+				return initializeAsync( data );
+			}
+		}
+		else {
+			return null;
+		}
+	}
+
+	@Override
 	public void resolveInstance(Data data) {
 		if ( data.getState() == State.KEY_RESOLVED ) {
 			final var rowProcessingState = data.getRowProcessingState();
@@ -208,7 +233,15 @@ public class EntitySelectFetchInitializer<Data extends EntitySelectFetchInitiali
 		}
 	}
 
-	protected void initialize(EntitySelectFetchInitializerData data) {
+	@Override
+	public void initializeInstanceAsync(Data data) {
+		if ( data.getState() == State.RESOLVED ) {
+			data.setState( State.INITIALIZED );
+			data.setBlockingRunnable( new LazyLoadBlockingRunnable<>( data.getInstance() ) );
+		}
+	}
+
+	protected void initialize(Data data) {
 		final var rowProcessingState = data.getRowProcessingState();
 		final var session = rowProcessingState.getSession();
 		final var persistenceContext = session.getPersistenceContextInternal();
@@ -217,16 +250,50 @@ public class EntitySelectFetchInitializer<Data extends EntitySelectFetchInitiali
 	}
 
 	protected void initialize(
-			EntitySelectFetchInitializerData data,
+			Data data,
 			@Nullable EntityHolder holder,
 			SharedSessionContractImplementor session,
+			PersistenceContext persistenceContext) {
+		if ( needsInitialization( data, holder, persistenceContext ) ) {
+			final Object instance = session.internalLoad(
+					concreteDescriptor.getEntityName(),
+					data.entityIdentifier,
+					true,
+					toOneMapping.isInternalLoadNullable()
+			);
+			postLoad( data, concreteDescriptor, instance );
+		}
+	}
+
+	protected @Nullable BlockingRunnable<Data> initializeAsync(Data data) {
+		final var persistenceContext = data.getRowProcessingState().getSession().getPersistenceContextInternal();
+		final EntityKey entityKey = new EntityKey( data.entityIdentifier, concreteDescriptor );
+		final EntityHolder holder = persistenceContext.getEntityHolder( entityKey );
+
+		if ( needsInitialization( data, holder, persistenceContext ) ) {
+			return new InternalLoadBlockingRunnable<>(
+					concreteDescriptor,
+					data.entityIdentifier,
+					true,
+					toOneMapping.isInternalLoadNullable(),
+					this::postLoad
+			);
+		}
+		else {
+			return null;
+		}
+	}
+
+	private boolean needsInitialization(
+			Data data,
+			@Nullable EntityHolder holder,
 			PersistenceContext persistenceContext) {
 		if ( holder != null ) {
 			data.setInstance( persistenceContext.proxyFor( holder, concreteDescriptor ) );
 			if ( holder.getEntityInitializer() == null ) {
 				if ( data.getInstance() != null && Hibernate.isInitialized( data.getInstance() ) ) {
 					data.setState( State.INITIALIZED );
-					return;
+					return false;
 				}
 			}
 			else if ( holder.getEntityInitializer() != this ) {
@@ -234,29 +301,25 @@ public class EntitySelectFetchInitializer<Data extends EntitySelectFetchInitiali
 				if ( holder.getJdbcValuesProcessingState() == data.getRowProcessingState().getJdbcValuesSourceProcessingState() ) {
 					data.setState( State.INITIALIZED );
 				}
-				return;
+				return false;
 			}
 			else if ( data.getInstance() == null ) {
 				// todo: maybe mark this as resolved instead?
 				assert holder.getProxy() == null : "How to handle this case?";
 				data.setState( State.INITIALIZED );
-				return;
+				return false;
 			}
 		}
-		data.setState( State.INITIALIZED );
-		final String entityName = concreteDescriptor.getEntityName();
+		return true;
+	}
 
-		final Object instance = session.internalLoad(
-				entityName,
-				data.entityIdentifier,
-				true,
-				toOneMapping.isInternalLoadNullable()
-		);
+	private void postLoad(Data data, EntityPersister concreteDescriptor, @Nullable Object instance) {
+		data.setState( State.INITIALIZED );
 		data.setInstance( instance );
 
 		if ( instance == null ) {
 			checkNotFound( data );
-			persistenceContext.claimEntityHolderIfPossible(
+			data.getRowProcessingState().getSession().getPersistenceContextInternal().claimEntityHolderIfPossible(
 					new EntityKey( data.entityIdentifier, concreteDescriptor ),
 					null,
 					data.getRowProcessingState().getJdbcValuesSourceProcessingState(),

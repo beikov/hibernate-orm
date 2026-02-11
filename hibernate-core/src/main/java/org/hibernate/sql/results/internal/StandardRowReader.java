@@ -7,12 +7,15 @@ package org.hibernate.sql.results.internal;
 import java.lang.reflect.Array;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
+import org.hibernate.Hibernate;
 import org.hibernate.engine.spi.EntityKey;
 import org.hibernate.internal.build.AllowReflection;
 import org.hibernate.sql.results.graph.DomainResultAssembler;
 import org.hibernate.sql.results.graph.Initializer;
 import org.hibernate.sql.results.graph.InitializerData;
+import org.hibernate.sql.results.graph.entity.internal.AbstractBatchEntitySelectFetchInitializer;
 import org.hibernate.sql.results.jdbc.spi.JdbcValuesMappingResolution;
 import org.hibernate.sql.results.jdbc.spi.RowProcessingState;
 import org.hibernate.sql.results.spi.RowReader;
@@ -32,6 +35,10 @@ public class StandardRowReader<T> implements RowReader<T> {
 	private final InitializerData[] initializersData;
 	private final Initializer<InitializerData>[] sortedForResolveInstance;
 	private final InitializerData[] sortedForResolveInstanceData;
+	private final Initializer<InitializerData>[] beforeResolveInstance;
+	private final InitializerData[] beforeResolveInstanceData;
+	private final Initializer<InitializerData>[] afterResolveInstance;
+	private final InitializerData[] afterResolveInstanceData;
 	private final boolean hasCollectionInitializers;
 	private final @Nullable RowTransformer<T> rowTransformer;
 	private final @Nullable Class<T> domainResultJavaType;
@@ -48,6 +55,8 @@ public class StandardRowReader<T> implements RowReader<T> {
 				jdbcValuesMappingResolution.getResultInitializers(),
 				jdbcValuesMappingResolution.getInitializers(),
 				jdbcValuesMappingResolution.getSortedForResolveInstance(),
+				jdbcValuesMappingResolution.getBeforeResolveInstanceInitializers(),
+				jdbcValuesMappingResolution.getAfterResolveInstanceInitializers(),
 				jdbcValuesMappingResolution.hasCollectionInitializers(),
 				rowTransformer,
 				domainResultJavaType
@@ -59,6 +68,8 @@ public class StandardRowReader<T> implements RowReader<T> {
 			Initializer<?>[] resultInitializers,
 			Initializer<?>[] initializers,
 			Initializer<?>[] sortedForResolveInitializers,
+			Initializer<?>[] beforeResolveInstanceInitializers,
+			Initializer<?>[] afterResolveInstanceInitializers,
 			boolean hasCollectionInitializers,
 			RowTransformer<T> rowTransformer,
 			@Nullable Class<T> domainResultJavaType) {
@@ -68,7 +79,12 @@ public class StandardRowReader<T> implements RowReader<T> {
 		this.initializers = (Initializer<InitializerData>[]) initializers;
 		this.initializersData = new InitializerData[initializers.length];
 		this.sortedForResolveInstance = (Initializer<InitializerData>[]) sortedForResolveInitializers;
-		this.sortedForResolveInstanceData = new InitializerData[sortedForResolveInstance.length];
+		this.sortedForResolveInstanceData = new InitializerData[sortedForResolveInitializers.length];
+		this.beforeResolveInstance = (Initializer<InitializerData>[]) beforeResolveInstanceInitializers;
+		this.beforeResolveInstanceData = new InitializerData[beforeResolveInstanceInitializers.length];
+		this.afterResolveInstance = (Initializer<InitializerData>[]) afterResolveInstanceInitializers;
+		this.afterResolveInstanceData = new InitializerData[afterResolveInstanceInitializers.length];
+
 		this.hasCollectionInitializers = hasCollectionInitializers;
 		this.rowTransformer =
 				rowTransformer == RowTransformerArrayImpl.instance() && resultAssemblers.length != 1
@@ -229,15 +245,64 @@ public class StandardRowReader<T> implements RowReader<T> {
 		for ( int i = 0; i < resultInitializers.length; i++ ) {
 			resultInitializers[i].resolveKey( resultInitializersData[i] );
 		}
+		for ( int i = 0; i < beforeResolveInstance.length; i++ ) {
+			if ( beforeResolveInstanceData[i].getState() == Initializer.State.KEY_RESOLVED ) {
+				run( beforeResolveInstance[i].resolveInstanceAsync( beforeResolveInstanceData[i] ), beforeResolveInstanceData[i] );
+			}
+		}
 		for ( int i = 0; i < sortedForResolveInstance.length; i++ ) {
 			if ( sortedForResolveInstanceData[i].getState() == Initializer.State.KEY_RESOLVED ) {
 				sortedForResolveInstance[i].resolveInstance( sortedForResolveInstanceData[i] );
 			}
 		}
+		for ( int i = 0; i < afterResolveInstance.length; i++ ) {
+			if ( afterResolveInstanceData[i].getState() == Initializer.State.KEY_RESOLVED ) {
+				run( afterResolveInstance[i].resolveInstanceAsync( afterResolveInstanceData[i] ), afterResolveInstanceData[i] );
+			}
+		}
 		for ( int i = 0; i < initializers.length; i++ ) {
 			if ( initializersData[i].getState() == Initializer.State.RESOLVED ) {
-				initializers[i].initializeInstance( initializersData[i] );
+				initializers[i].initializeInstanceAsync( initializersData[i] );
 			}
+		}
+		// This can run in any order, so there is the potential for using structured concurrency
+		for ( int i = 0; i < initializers.length; i++ ) {
+			run( initializersData[i] );
+		}
+	}
+
+	private <X extends InitializerData> void run(X initializerData) {
+		@SuppressWarnings("unchecked") final Initializer.BlockingRunnable<X> blockingRunnable =
+				(Initializer.BlockingRunnable<X>) initializerData.getBlockingRunnable();
+		if ( blockingRunnable != null ) {
+			run( blockingRunnable, initializerData );
+		}
+	}
+
+	private <X extends InitializerData> void run(Initializer.BlockingRunnable<X> blockingRunnable, X data) {
+		if ( blockingRunnable == null ) {
+			return;
+		}
+		else if ( blockingRunnable instanceof Initializer.InternalLoadBlockingRunnable<X> internalLoad ) {
+			internalLoad.consumer().postLoad( data, internalLoad.concreteDescriptor(), data.getRowProcessingState().getSession().internalLoad(
+					internalLoad.concreteDescriptor().getEntityName(),
+					internalLoad.entityIdentifier(),
+					internalLoad.eager(),
+					internalLoad.nullable()
+			) );
+		}
+		else if ( blockingRunnable instanceof Initializer.LoadByUniqueKeyBlockingRunnable<X> loadByUniqueKey ) {
+			loadByUniqueKey.consumer().postLoad( data, loadByUniqueKey.entityUniqueKey(), loadByUniqueKey.concreteDescriptor().loadByUniqueKey(
+					loadByUniqueKey.entityUniqueKey().getUniqueKeyName(),
+					loadByUniqueKey.entityUniqueKey().getKey(),
+					data.getRowProcessingState().getSession()
+			) );
+		}
+		else if ( blockingRunnable instanceof Initializer.LazyLoadBlockingRunnable<X> lazyLoad ) {
+			Hibernate.initialize( lazyLoad.entity() );
+		}
+		else {
+			throw new AssertionError("Unsupported blocking runnable: " + blockingRunnable.getClass().getName());
 		}
 	}
 
@@ -248,8 +313,14 @@ public class StandardRowReader<T> implements RowReader<T> {
 			initializer.startLoading( processingState );
 			resultInitializersData[i] = initializer.getData( processingState );
 		}
+		for ( int i = 0; i < beforeResolveInstance.length; i++ ) {
+			beforeResolveInstanceData[i] = beforeResolveInstance[i].getData( processingState );
+		}
 		for ( int i = 0; i < sortedForResolveInstance.length; i++ ) {
 			sortedForResolveInstanceData[i] = sortedForResolveInstance[i].getData( processingState );
+		}
+		for ( int i = 0; i < afterResolveInstance.length; i++ ) {
+			afterResolveInstanceData[i] = afterResolveInstance[i].getData( processingState );
 		}
 		for ( int i = 0; i < initializers.length; i++ ) {
 			initializersData[i] = initializers[i].getData( processingState );
@@ -259,7 +330,18 @@ public class StandardRowReader<T> implements RowReader<T> {
 	@Override
 	public void finishUp(RowProcessingState rowProcessingState) {
 		for ( int i = 0; i < initializers.length; i++ ) {
-			initializers[i].endLoading( initializersData[i] );
+			batchLoad( initializers[i].getBatchLoad( initializersData[i] ), rowProcessingState );
+		}
+//		for ( int i = 0; i < initializers.length; i++ ) {
+//			initializers[i].endLoading( initializersData[i] );
+//		}
+	}
+
+	private <X> void batchLoad(Initializer.@Nullable BatchLoadBlockingRunnable<X> batchLoadRunnable, RowProcessingState rowProcessingState) {
+		if ( batchLoadRunnable != null ) {
+			for ( Map.Entry<EntityKey, X> entry : batchLoadRunnable.toBatchLoad().entrySet() ) {
+				batchLoadRunnable.consumer().postLoad( entry.getKey(), entry.getValue(), rowProcessingState );
+			}
 		}
 	}
 

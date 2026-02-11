@@ -23,6 +23,8 @@ import org.hibernate.sql.results.jdbc.spi.RowProcessingState;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.util.HashMap;
+
 import static org.hibernate.engine.internal.ManagedTypeHelper.isPersistentAttributeInterceptable;
 import static org.hibernate.proxy.HibernateProxy.extractLazyInitializer;
 import static org.hibernate.sql.results.graph.entity.internal.EntityInitializerImpl.getAttributeInterceptor;
@@ -93,28 +95,50 @@ public abstract class AbstractBatchEntitySelectFetchInitializer<Data extends Abs
 		}
 	}
 
+//	@Override
+//	public AsyncTiming getAsyncTiming(Data data) {
+//		return data.batchDisabled ? AsyncTiming.RESOLVE : AsyncTiming.FINISH;
+//	}
+
 	@Override
 	public void resolveInstance(Data data) {
 		if ( data.getState() == State.KEY_RESOLVED ) {
-			data.setState( State.RESOLVED );
-			final var rowProcessingState = data.getRowProcessingState();
-			if ( data.entityIdentifier == null ) {
-				// entityIdentifier can be null if the identifier is based on an initializer
-				data.entityIdentifier = keyAssembler.assemble( rowProcessingState );
-				if ( data.entityIdentifier == null ) {
-					data.entityKey = null;
-					data.setInstance( null );
-					data.setState( State.MISSING );
-					return;
-				}
+			if ( needsInitialization( data ) ) {
+				initialize( data );
 			}
-			resolveInstanceFromIdentifier( data );
 		}
 	}
 
-	protected void resolveInstanceFromIdentifier(Data data) {
+	@Override
+	public BlockingRunnable<Data> resolveInstanceAsync(Data data) {
+		if ( data.getState() == State.KEY_RESOLVED ) {
+			if ( needsInitialization( data ) ) {
+				return initializeAsync( data );
+			}
+			else {
+				return null;
+			}
+		}
+		else {
+			return null;
+		}
+	}
+
+	protected boolean needsInitialization(Data data) {
+		data.setState( State.RESOLVED );
+		final var rowProcessingState = data.getRowProcessingState();
+		if ( data.entityIdentifier == null ) {
+			// entityIdentifier can be null if the identifier is based on an initializer
+			data.entityIdentifier = keyAssembler.assemble( rowProcessingState );
+			if ( data.entityIdentifier == null ) {
+				data.entityKey = null;
+				data.setInstance( null );
+				data.setState( State.MISSING );
+				return false;
+			}
+		}
 		if ( data.batchDisabled ) {
-			initialize( data );
+			return true;
 		}
 		else {
 			data.entityKey = new EntityKey( data.entityIdentifier, concreteDescriptor );
@@ -124,6 +148,7 @@ public abstract class AbstractBatchEntitySelectFetchInitializer<Data extends Abs
 				// there isn't another initializer that is loading it
 				registerToBatchFetchQueue( data );
 			}
+			return false;
 		}
 	}
 
@@ -238,6 +263,22 @@ public abstract class AbstractBatchEntitySelectFetchInitializer<Data extends Abs
 				Hibernate.initialize( data.getInstance() );
 			}
 		}
+	}
+
+	@Override
+	public void initializeInstanceAsync(Data data) {
+		data.setBlockingRunnable( initializeAsync( data ) );
+	}
+
+	@Override
+	protected @Nullable BlockingRunnable<Data> initializeAsync(Data data) {
+		if ( data.getState() == State.RESOLVED ) {
+			data.setState( State.INITIALIZED );
+			if ( data.batchDisabled ) {
+				return new LazyLoadBlockingRunnable<>( data.getInstance() );
+			}
+		}
+		return null;
 	}
 
 	protected Object getExistingInitializedInstance(Data data) {

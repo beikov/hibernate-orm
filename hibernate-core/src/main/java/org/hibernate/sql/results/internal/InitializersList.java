@@ -25,15 +25,18 @@ public final class InitializersList {
 
 	private final Initializer<?>[] initializers;
 	private final Initializer<?>[] sortedForResolveInstance;
-	private final boolean hasCollectionInitializers;
+	private final Initializer<?>[] beforeResolveInstanceInitializers;
+	private final Initializer<?>[] afterResolveInstanceInitializers;
 
 	private InitializersList(
 			Initializer<?>[] initializers,
 			Initializer<?>[] sortedForResolveInstance,
-			boolean hasCollectionInitializers) {
+			Initializer<?>[] beforeResolveInstanceInitializers,
+			Initializer<?>[] afterResolveInstanceInitializers) {
 		this.initializers = initializers;
 		this.sortedForResolveInstance = sortedForResolveInstance;
-		this.hasCollectionInitializers = hasCollectionInitializers;
+		this.beforeResolveInstanceInitializers = beforeResolveInstanceInitializers;
+		this.afterResolveInstanceInitializers = afterResolveInstanceInitializers;
 	}
 
 	public Initializer<?>[] getInitializers() {
@@ -42,6 +45,14 @@ public final class InitializersList {
 
 	public Initializer<?>[] getSortedForResolveInstance() {
 		return sortedForResolveInstance;
+	}
+
+	public Initializer<?>[] getBeforeResolveInstanceInitializers() {
+		return beforeResolveInstanceInitializers;
+	}
+
+	public Initializer<?>[] getAfterResolveInstanceInitializers() {
+		return afterResolveInstanceInitializers;
 	}
 
 	@Deprecated //for simpler migration to the new SPI
@@ -57,6 +68,8 @@ public final class InitializersList {
 		private final ArrayList<Initializer<?>> initializers;
 		int nonCollectionInitializersNum = 0;
 		int resolveFirstNum = 0;
+		int beforeResolve = 0;
+		int afterResolve = 0;
 
 		public Builder() {
 			initializers = new ArrayList<>();
@@ -76,8 +89,14 @@ public final class InitializersList {
 			if ( !initializer.isCollectionInitializer() ) {
 				nonCollectionInitializersNum++;
 			}
-			if ( initializeFirst( initializer ) ) {
-				resolveFirstNum++;
+			switch ( initializer.getAsyncMode() ) {
+				case NONE -> {
+					if ( initializeFirst( initializer ) ) {
+						resolveFirstNum++;
+					}
+				}
+				case BEFORE_RESOLVE -> beforeResolve++;
+				case AFTER_RESOLVE -> afterResolve++;
 			}
 		}
 
@@ -86,24 +105,34 @@ public final class InitializersList {
 		}
 
 		public InitializersList build() {
-			final int size = initializers.size();
+			final int size = initializers.size() - beforeResolve - afterResolve;
 			final Initializer<?>[] sortedForResolveInstance = new Initializer<?>[size];
+			final Initializer<?>[] beforeResolveInstance = new Initializer<?>[beforeResolve];
+			final Initializer<?>[] afterResolveInstance = new Initializer<?>[afterResolve];
 			int resolveFirstIdx = 0;
 			int resolveLaterIdx = resolveFirstNum;
+			int beforeResolveIdx = 0;
+			int afterResolveIdx = 0;
 			final Initializer<?>[] originalSortInitializers = toArray( initializers );
 			for ( Initializer<?> initializer : originalSortInitializers ) {
-				if ( initializeFirst( initializer ) ) {
-					sortedForResolveInstance[resolveFirstIdx++] = initializer;
-				}
-				else {
-					sortedForResolveInstance[resolveLaterIdx++] = initializer;
+				switch ( initializer.getAsyncMode() ) {
+					case NONE -> {
+						if ( initializeFirst( initializer ) ) {
+							sortedForResolveInstance[resolveFirstIdx++] = initializer;
+						}
+						else {
+							sortedForResolveInstance[resolveLaterIdx++] = initializer;
+						}
+					}
+					case BEFORE_RESOLVE -> beforeResolveInstance[beforeResolveIdx++] = initializer;
+					case AFTER_RESOLVE -> afterResolveInstance[afterResolveIdx++] = initializer;
 				}
 			}
-			final boolean hasCollectionInitializers = ( nonCollectionInitializersNum != initializers.size() );
 			return new InitializersList(
 					originalSortInitializers,
 					sortedForResolveInstance,
-					hasCollectionInitializers
+					beforeResolveInstance,
+					afterResolveInstance
 			);
 		}
 

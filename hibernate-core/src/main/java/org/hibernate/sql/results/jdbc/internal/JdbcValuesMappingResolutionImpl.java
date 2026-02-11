@@ -72,4 +72,13 @@ public class JdbcValuesMappingResolutionImpl implements JdbcValuesMappingResolut
 		return initializersList.getSortedForResolveInstance();
 	}
 
+	@Override
+	public Initializer<?>[] getBeforeResolveInstanceInitializers() {
+		return initializersList.getBeforeResolveInstanceInitializers();
+	}
+
+	@Override
+	public Initializer<?>[] getAfterResolveInstanceInitializers() {
+		return initializersList.getAfterResolveInstanceInitializers();
+	}
 }

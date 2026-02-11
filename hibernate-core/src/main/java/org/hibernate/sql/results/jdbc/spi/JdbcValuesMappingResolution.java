@@ -25,5 +25,9 @@ public interface JdbcValuesMappingResolution {
 
 	Initializer<?>[] getSortedForResolveInstance();
 
+	Initializer<?>[] getBeforeResolveInstanceInitializers();
+
+	Initializer<?>[] getAfterResolveInstanceInitializers();
+
 	boolean hasCollectionInitializers();
 }

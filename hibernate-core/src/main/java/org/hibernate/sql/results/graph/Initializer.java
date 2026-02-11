@@ -5,8 +5,11 @@
 package org.hibernate.sql.results.graph;
 
 import org.hibernate.Incubating;
+import org.hibernate.engine.spi.EntityKey;
+import org.hibernate.engine.spi.EntityUniqueKey;
 import org.hibernate.metamodel.mapping.ForeignKeyDescriptor;
 import org.hibernate.metamodel.mapping.ModelPart;
+import org.hibernate.persister.entity.EntityPersister;
 import org.hibernate.spi.EntityIdentifierNavigablePath;
 import org.hibernate.spi.NavigablePath;
 import org.hibernate.sql.results.graph.collection.CollectionInitializer;
@@ -15,6 +18,8 @@ import org.hibernate.sql.results.graph.entity.EntityInitializer;
 import org.hibernate.sql.results.jdbc.spi.RowProcessingState;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
+
+import java.util.HashMap;
 
 /**
  * Defines a multi-step process for initializing entity, collection and
@@ -126,6 +131,73 @@ public interface Initializer<Data extends InitializerData> {
 	 */
 	void resolveInstance(Data data);
 
+	default @Nullable BlockingRunnable<Data> resolveInstanceAsync(Data data) {
+		return null;
+	}
+
+	default AsyncMode getAsyncMode() {
+		return AsyncMode.NONE;
+	}
+
+	enum AsyncMode {
+		NONE,
+		BEFORE_RESOLVE,
+		AFTER_RESOLVE
+	}
+
+	default AsyncTiming getAsyncTiming(Data data) {
+		return AsyncTiming.RESOLVE;
+	}
+
+	enum AsyncTiming {
+		RESOLVE,
+		INITIALIZE,
+		FINISH
+	}
+
+	sealed interface BlockingRunnable<X extends InitializerData> {
+	}
+
+	record InternalLoadBlockingRunnable<X extends InitializerData>(
+			EntityPersister concreteDescriptor,
+			Object entityIdentifier,
+			boolean eager,
+			boolean nullable,
+			InternalLoadConsumer<X> consumer
+	) implements BlockingRunnable<X> {
+	}
+
+	interface InternalLoadConsumer<X extends InitializerData> {
+		void postLoad(X data, EntityPersister concreteDescriptor, @Nullable Object entity);
+	}
+
+	record LoadByUniqueKeyBlockingRunnable<X extends InitializerData>(
+			EntityPersister concreteDescriptor,
+			EntityUniqueKey entityUniqueKey,
+			LoadByUniqueKeyConsumer<X> consumer
+			) implements BlockingRunnable<X>{
+	}
+
+	interface LoadByUniqueKeyConsumer<X extends InitializerData> {
+		void postLoad(X data, EntityUniqueKey entityUniqueKey, @Nullable Object entity);
+	}
+
+	record LazyLoadBlockingRunnable<X extends InitializerData>(Object entity) implements BlockingRunnable<X> {
+	}
+
+	default @Nullable BatchLoadBlockingRunnable<?> getBatchLoad(Data data) {
+		return null;
+	}
+
+	record BatchLoadBlockingRunnable<X>(
+			HashMap<EntityKey, X> toBatchLoad,
+			BatchLoadConsumer<X> consumer) {
+	}
+
+	interface BatchLoadConsumer<X> {
+		void postLoad(EntityKey entityKey, X context, RowProcessingState rowProcessingState);
+	}
+
 	default void resolveInstance(RowProcessingState rowProcessingState) {
 		resolveInstance( getData( rowProcessingState ) );
 	}
@@ -162,6 +234,10 @@ public interface Initializer<Data extends InitializerData> {
 
 	default void initializeInstance(RowProcessingState rowProcessingState) {
 		initializeInstance( getData( rowProcessingState ) );
+	}
+
+	default void initializeInstanceAsync(Data data) {
+		initializeInstance( data );
 	}
 
 	/**

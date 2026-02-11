@@ -8,7 +8,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.hibernate.engine.spi.EntityKey;
+import org.hibernate.engine.spi.SharedSessionContractImplementor;
 import org.hibernate.metamodel.mapping.AttributeMapping;
 import org.hibernate.metamodel.mapping.internal.ToOneAttributeMapping;
 import org.hibernate.persister.entity.EntityPersister;
@@ -94,29 +96,39 @@ public class BatchEntitySelectFetchInitializer extends AbstractBatchEntitySelect
 	}
 
 	@Override
+	public @Nullable BatchLoadBlockingRunnable<?> getBatchLoad(BatchEntitySelectFetchInitializerData data) {
+		final var toBatchLoad = data.toBatchLoad;
+		return toBatchLoad != null
+			? new BatchLoadBlockingRunnable<>( toBatchLoad, this::postLoad )
+				: null;
+	}
+
+	@Override
 	public void endLoading(BatchEntitySelectFetchInitializerData data) {
 		super.endLoading( data );
 		final var toBatchLoad = data.toBatchLoad;
 		if ( toBatchLoad != null ) {
-			final var session = data.getRowProcessingState().getSession();
-			final var factory = session.getFactory();
-			final var persistenceContext = session.getPersistenceContextInternal();
 			for ( var entry : toBatchLoad.entrySet() ) {
-				final var entityKey = entry.getKey();
-				final var parentInfos = entry.getValue();
-				final Object instance = loadInstance( entityKey, toOneMapping, affectedByFilter, session );
-				for ( var parentInfo : parentInfos ) {
-					final Object parentInstance = parentInfo.parentInstance;
-					final var entityEntry = persistenceContext.getEntry( parentInstance );
-					referencedModelPartSetter.set( parentInstance, instance );
-					final var loadedState = entityEntry.getLoadedState();
-					if ( loadedState != null ) {
-						loadedState[parentInfo.propertyIndex] =
-								referencedModelPartType.deepCopy( instance, factory );
-					}
-				}
+				postLoad( entry.getKey(), entry.getValue(), data.getRowProcessingState() );
 			}
 			data.toBatchLoad = null;
+		}
+	}
+
+	private void postLoad(EntityKey entityKey, List<ParentInfo> parentInfos, RowProcessingState rowProcessingState) {
+		final var session = rowProcessingState.getSession();
+		final var factory = session.getFactory();
+		final var persistenceContext = session.getPersistenceContextInternal();
+		final Object instance = loadInstance( entityKey, toOneMapping, affectedByFilter, session );
+		for ( var parentInfo : parentInfos ) {
+			final Object parentInstance = parentInfo.parentInstance;
+			final var entityEntry = persistenceContext.getEntry( parentInstance );
+			referencedModelPartSetter.set( parentInstance, instance );
+			final var loadedState = entityEntry.getLoadedState();
+			if ( loadedState != null ) {
+				loadedState[parentInfo.propertyIndex] =
+						referencedModelPartType.deepCopy( instance, factory );
+			}
 		}
 	}
 

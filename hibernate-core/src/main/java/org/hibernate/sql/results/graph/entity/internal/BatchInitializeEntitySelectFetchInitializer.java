@@ -4,8 +4,10 @@
  */
 package org.hibernate.sql.results.graph.entity.internal;
 
+import java.util.HashMap;
 import java.util.HashSet;
 
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.hibernate.engine.spi.EntityKey;
 import org.hibernate.metamodel.mapping.internal.ToOneAttributeMapping;
 import org.hibernate.persister.entity.EntityPersister;
@@ -25,7 +27,7 @@ import static org.hibernate.internal.log.LoggingHelper.toLoggableString;
 public class BatchInitializeEntitySelectFetchInitializer extends AbstractBatchEntitySelectFetchInitializer<BatchInitializeEntitySelectFetchInitializer.BatchInitializeEntitySelectFetchInitializerData> {
 
 	public static class BatchInitializeEntitySelectFetchInitializerData extends AbstractBatchEntitySelectFetchInitializerData {
-		private HashSet<EntityKey> toBatchLoad;
+		private HashMap<EntityKey, Object> toBatchLoad;
 
 		public BatchInitializeEntitySelectFetchInitializerData(
 				BatchInitializeEntitySelectFetchInitializer initializer,
@@ -66,9 +68,17 @@ public class BatchInitializeEntitySelectFetchInitializer extends AbstractBatchEn
 		data.setInstance( instance );
 		var toBatchLoad = data.toBatchLoad;
 		if ( toBatchLoad == null ) {
-			toBatchLoad = data.toBatchLoad = new HashSet<>();
+			toBatchLoad = data.toBatchLoad = new HashMap<>();
 		}
-		toBatchLoad.add( entityKey );
+		toBatchLoad.put( entityKey, null );
+	}
+
+	@Override
+	public @Nullable BatchLoadBlockingRunnable<?> getBatchLoad(BatchInitializeEntitySelectFetchInitializerData data) {
+		final var toBatchLoad = data.toBatchLoad;
+		return toBatchLoad != null
+			? new BatchLoadBlockingRunnable<>( toBatchLoad, this::postLoad )
+				: null;
 	}
 
 	@Override
@@ -76,12 +86,15 @@ public class BatchInitializeEntitySelectFetchInitializer extends AbstractBatchEn
 		super.endLoading( data );
 		final var keysToBatchLoad = data.toBatchLoad;
 		if ( keysToBatchLoad != null ) {
-			final var session = data.getRowProcessingState().getSession();
-			for ( var entityKey : keysToBatchLoad ) {
-				loadInstance( entityKey, toOneMapping, affectedByFilter, session );
+			for ( var entityKey : keysToBatchLoad.keySet() ) {
+				postLoad( entityKey, null, data.getRowProcessingState() );
 			}
 			data.toBatchLoad = null;
 		}
+	}
+
+	private void postLoad(EntityKey entityKey, Object noop, RowProcessingState rowProcessingState) {
+		loadInstance( entityKey, toOneMapping, affectedByFilter, rowProcessingState.getSession() );
 	}
 
 	@Override

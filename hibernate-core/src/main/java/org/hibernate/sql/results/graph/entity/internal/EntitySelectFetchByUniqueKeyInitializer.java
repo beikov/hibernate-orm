@@ -4,6 +4,7 @@
  */
 package org.hibernate.sql.results.graph.entity.internal;
 
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.hibernate.engine.spi.EntityUniqueKey;
 import org.hibernate.metamodel.mapping.internal.ToOneAttributeMapping;
 import org.hibernate.persister.entity.EntityPersister;
@@ -11,6 +12,7 @@ import org.hibernate.spi.NavigablePath;
 import org.hibernate.sql.results.graph.AssemblerCreationState;
 import org.hibernate.sql.results.graph.DomainResult;
 import org.hibernate.sql.results.graph.InitializerParent;
+import org.hibernate.sql.results.jdbc.spi.RowProcessingState;
 
 import static org.hibernate.internal.log.LoggingHelper.toLoggableString;
 
@@ -50,17 +52,60 @@ public class EntitySelectFetchByUniqueKeyInitializer
 						session.getFactory()
 				);
 		data.setInstance( persistenceContext.getEntity( entityUniqueKey ) );
-		if ( data.getInstance() == null ) {
+
+		if ( data.getInstance() != null ) {
+			data.setInstance( persistenceContext.proxyFor( data.getInstance() ) );
+		}
+		else {
 			final Object instance =
 					concreteDescriptor.loadByUniqueKey( uniqueKeyPropertyName, data.entityIdentifier, session );
-			data.setInstance( instance );
-			if ( instance == null ) {
-				checkNotFound( data );
-			}
-			// If the entity was not in the persistence context but was found now,
-			// then add it to the persistence context
-			persistenceContext.addEntity( entityUniqueKey, instance );
+			postLoad( data, entityUniqueKey, instance );
 		}
+	}
+
+	@Override
+	protected @Nullable BlockingRunnable<EntitySelectFetchInitializerData> initializeAsync(EntitySelectFetchInitializerData data) {
+		final String entityName = concreteDescriptor.getEntityName();
+		final String uniqueKeyPropertyName = fetchedAttribute.getReferencedPropertyName();
+
+		final var session = data.getRowProcessingState().getSession();
+		final var persistenceContext = session.getPersistenceContextInternal();
+
+		final var entityUniqueKey =
+				new EntityUniqueKey(
+						entityName,
+						uniqueKeyPropertyName,
+						data.entityIdentifier,
+						concreteDescriptor.getPropertyType( uniqueKeyPropertyName ),
+						session.getFactory()
+				);
+		data.setInstance( persistenceContext.getEntity( entityUniqueKey ) );
+
+		if ( data.getInstance() != null ) {
+			data.setInstance( persistenceContext.proxyFor( data.getInstance() ) );
+			return null;
+		}
+		else {
+			return new LoadByUniqueKeyBlockingRunnable<>(
+					concreteDescriptor,
+					entityUniqueKey,
+					this::postLoad
+			);
+		}
+	}
+
+	private void postLoad(EntitySelectFetchInitializerData data, EntityUniqueKey entityUniqueKey, @Nullable Object instance) {
+		final var session = data.getRowProcessingState().getSession();
+		final var persistenceContext = session.getPersistenceContextInternal();
+
+		data.setState( State.INITIALIZED );
+		data.setInstance( instance );
+		if ( instance == null ) {
+			checkNotFound( data );
+		}
+		// If the entity was not in the persistence context but was found now,
+		// then add it to the persistence context
+		persistenceContext.addEntity( entityUniqueKey, instance );
 		if ( data.getInstance() != null ) {
 			data.setInstance( persistenceContext.proxyFor( data.getInstance() ) );
 		}

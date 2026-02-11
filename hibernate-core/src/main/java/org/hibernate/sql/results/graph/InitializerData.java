@@ -15,6 +15,7 @@ public abstract class InitializerData {
 	protected final RowProcessingState rowProcessingState;
 	protected Initializer.State state = Initializer.State.UNINITIALIZED;
 	protected @Nullable Object instance;
+	protected Initializer.@Nullable BlockingRunnable<?> blockingRunnable;
 
 	public InitializerData(RowProcessingState rowProcessingState) {
 		this.rowProcessingState = rowProcessingState;
@@ -28,6 +29,7 @@ public abstract class InitializerData {
 		this.rowProcessingState = original.rowProcessingState;
 		this.state = original.state;
 		this.instance = original.instance;
+		this.blockingRunnable = original.blockingRunnable;
 	}
 
 	public RowProcessingState getRowProcessingState() {
@@ -48,5 +50,13 @@ public abstract class InitializerData {
 
 	public void setInstance(@Nullable Object instance) {
 		this.instance = instance;
+	}
+
+	public Initializer.@Nullable BlockingRunnable<?> getBlockingRunnable() {
+		return blockingRunnable;
+	}
+
+	public void setBlockingRunnable(Initializer.@Nullable BlockingRunnable<?> blockingRunnable) {
+		this.blockingRunnable = blockingRunnable;
 	}
 }

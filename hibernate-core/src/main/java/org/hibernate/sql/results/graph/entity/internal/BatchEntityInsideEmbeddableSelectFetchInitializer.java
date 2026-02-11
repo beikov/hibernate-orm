@@ -9,7 +9,10 @@ import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.hibernate.engine.spi.EntityKey;
 import org.hibernate.metamodel.mapping.AttributeMapping;
 import org.hibernate.metamodel.mapping.internal.ToOneAttributeMapping;
@@ -163,23 +166,36 @@ public class BatchEntityInsideEmbeddableSelectFetchInitializer extends AbstractB
 	}
 
 	@Override
+	public @Nullable BatchLoadBlockingRunnable<?> getBatchLoad(BatchEntityInsideEmbeddableSelectFetchInitializerData data) {
+		final var toBatchLoad = data.toBatchLoad;
+		return toBatchLoad != null
+			? new BatchLoadBlockingRunnable<>( toBatchLoad, this::postLoad )
+				: null;
+	}
+
+	@Override
 	public void endLoading(BatchEntityInsideEmbeddableSelectFetchInitializerData data) {
 		super.endLoading( data );
 		final var toBatchLoad = data.toBatchLoad;
 		if ( toBatchLoad != null ) {
 			for ( var entry : toBatchLoad.entrySet() ) {
-				final var entityKey = entry.getKey();
-				final var parentInfos = entry.getValue();
-				final var session = data.getRowProcessingState().getSession();
-				final var factory = session.getFactory();
-				final var persistenceContext = session.getPersistenceContextInternal();
-				final Object loadedInstance = loadInstance( entityKey, toOneMapping, affectedByFilter, session );
-				for ( ParentInfo parentInfo : parentInfos ) {
-					final Object parentEntityInstance = parentInfo.parentEntityInstance;
-					final var parentEntityEntry = persistenceContext.getEntry( parentEntityInstance );
-					referencedModelPartSetter.set( parentInfo.parentInstance, loadedInstance );
-					final var loadedState = parentEntityEntry.getLoadedState();
-					if ( loadedState != null ) {
+				postLoad( entry.getKey(), entry.getValue(), data.getRowProcessingState() );
+			}
+			data.toBatchLoad = null;
+		}
+	}
+
+	private void postLoad(EntityKey entityKey, List<ParentInfo> parentInfos, RowProcessingState rowProcessingState) {
+		final var session = rowProcessingState.getSession();
+		final var factory = session.getFactory();
+		final var persistenceContext = session.getPersistenceContextInternal();
+		final Object loadedInstance = loadInstance( entityKey, toOneMapping, affectedByFilter, session );
+		for ( ParentInfo parentInfo : parentInfos ) {
+			final Object parentEntityInstance = parentInfo.parentEntityInstance;
+			final var parentEntityEntry = persistenceContext.getEntry( parentEntityInstance );
+			referencedModelPartSetter.set( parentInfo.parentInstance, loadedInstance );
+			final var loadedState = parentEntityEntry.getLoadedState();
+			if ( loadedState != null ) {
 						/*
 						E.g.
 
@@ -187,17 +203,14 @@ public class BatchEntityInsideEmbeddableSelectFetchInitializer extends AbstractB
 
 						The value of RootEmbeddable is needed to update the ParentEntity loaded state
 						 */
-						final int parentEntitySubclassId = parentInfo.parentEntitySubclassId;
-						final Object rootEmbeddable =
-								rootEmbeddableGetters[parentEntitySubclassId]
-										.get( parentEntityInstance );
-						loadedState[parentInfo.propertyIndex] =
-								rootEmbeddablePropertyTypes[parentEntitySubclassId]
-										.deepCopy( rootEmbeddable, factory );
-					}
-				}
+				final int parentEntitySubclassId = parentInfo.parentEntitySubclassId;
+				final Object rootEmbeddable =
+						rootEmbeddableGetters[parentEntitySubclassId]
+								.get( parentEntityInstance );
+				loadedState[parentInfo.propertyIndex] =
+						rootEmbeddablePropertyTypes[parentEntitySubclassId]
+								.deepCopy( rootEmbeddable, factory );
 			}
-			data.toBatchLoad = null;
 		}
 	}
 

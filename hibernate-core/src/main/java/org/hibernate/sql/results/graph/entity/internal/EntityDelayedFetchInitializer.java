@@ -11,6 +11,7 @@ import org.hibernate.bytecode.enhance.spi.interceptor.LazyAttributeLoadingInterc
 import org.hibernate.engine.internal.ManagedTypeHelper;
 import org.hibernate.engine.spi.EntityKey;
 import org.hibernate.engine.spi.EntityUniqueKey;
+import org.hibernate.engine.spi.PersistenceContext;
 import org.hibernate.engine.spi.PersistentAttributeInterceptable;
 import org.hibernate.engine.spi.SharedSessionContractImplementor;
 import org.hibernate.graph.GraphSemantic;
@@ -134,6 +135,53 @@ public class EntityDelayedFetchInitializer
 	}
 
 	@Override
+	public AsyncMode getAsyncMode() {
+		return isPartOfKey || parent.isEmbeddableInitializer() ? AsyncMode.BEFORE_RESOLVE : AsyncMode.AFTER_RESOLVE;
+	}
+
+	@Override
+	public BlockingRunnable<EntityDelayedFetchInitializerData> resolveInstanceAsync(EntityDelayedFetchInitializerData data) {
+		if ( data.getState() == State.KEY_RESOLVED ) {
+			// This initializer is done initializing, since this is only invoked for delayed or select initializers
+			data.setState( State.INITIALIZED );
+
+			final var rowProcessingState = data.getRowProcessingState();
+			data.entityIdentifier = identifierAssembler.assemble( rowProcessingState );
+
+			if ( data.entityIdentifier == null ) {
+				data.setInstance( null );
+				data.setState( State.MISSING );
+			}
+			else {
+				final var entityPersister = getEntityDescriptor();
+				final EntityPersister concreteDescriptor;
+				if ( discriminatorAssembler != null ) {
+					concreteDescriptor = determineConcreteEntityDescriptor(
+							rowProcessingState,
+							discriminatorAssembler,
+							entityPersister
+					);
+					if ( concreteDescriptor == null ) {
+						// If we find no discriminator, it means there's no entity in the target table
+						if ( !referencedModelPart.isOptional() ) {
+							throw new FetchNotFoundException( entityPersister.getEntityName(), data.entityIdentifier );
+						}
+						data.setInstance( null );
+						data.setState( State.MISSING );
+						return null;
+					}
+				}
+				else {
+					concreteDescriptor = entityPersister;
+				}
+
+				return initializeAsync( data, null, concreteDescriptor );
+			}
+		}
+		return null;
+	}
+
+	@Override
 	public void resolveInstance(EntityDelayedFetchInitializerData data) {
 		if ( data.getState() == State.KEY_RESOLVED ) {
 			// This initializer is done initializing, since this is only invoked for delayed or select initializers
@@ -179,17 +227,71 @@ public class EntityDelayedFetchInitializer
 			@Nullable EntityKey entityKey,
 			EntityPersister concreteDescriptor) {
 		if ( selectByUniqueKey ) {
-			data.setInstance( instanceWithUniqueKey( data, concreteDescriptor ) );
+			initializeInstanceWithUniqueKey( data, concreteDescriptor );
 		}
 		else {
-			data.setInstance( instanceWithId( data, concreteDescriptor, entityKey) );
+			initializeInstanceWithId( data, concreteDescriptor, entityKey );
 		}
 	}
 
-	private Object instanceWithId(
+	protected @Nullable BlockingRunnable<EntityDelayedFetchInitializerData> initializeAsync(
+			EntityDelayedFetchInitializerData data,
+			@Nullable EntityKey entityKey,
+			EntityPersister concreteDescriptor) {
+		if ( selectByUniqueKey ) {
+			final var session = data.getRowProcessingState().getSession();
+
+			final String uniqueKeyPropertyName = referencedModelPart.getReferencedPropertyName();
+			final var entityUniqueKey =
+					new EntityUniqueKey(
+							concreteDescriptor.getEntityName(),
+							uniqueKeyPropertyName,
+							data.entityIdentifier,
+							getUniqueKeyPropertyType( concreteDescriptor, session, uniqueKeyPropertyName ),
+							session.getFactory()
+					);
+
+			if ( needsInitializeByUniqueKey( data, entityUniqueKey ) ) {
+				return new LoadByUniqueKeyBlockingRunnable<>(
+						concreteDescriptor,
+						entityUniqueKey,
+						this::postLoadUnique
+				);
+			}
+		}
+		else {
+			if ( needsInitializationById( data, concreteDescriptor, entityKey ) ) {
+				return new InternalLoadBlockingRunnable<>(
+						concreteDescriptor,
+						data.entityIdentifier,
+						false,
+						false,
+						this::postLoad
+				);
+			}
+		}
+		return null;
+	}
+
+	private void initializeInstanceWithId(
 			EntityDelayedFetchInitializerData data,
 			EntityPersister concreteDescriptor,
 			EntityKey entityKey) {
+		if ( needsInitializationById( data, concreteDescriptor, entityKey ) ) {
+			final Object instance = data.getRowProcessingState().getSession().internalLoad(
+					concreteDescriptor.getEntityName(),
+					data.entityIdentifier,
+					false,
+					false
+			);
+			postLoad( data, concreteDescriptor, instance );
+		}
+	}
+
+	private boolean needsInitializationById(
+			EntityDelayedFetchInitializerData data,
+			EntityPersister concreteDescriptor,
+			@Nullable EntityKey entityKey) {
 		final var rowProcessingState = data.getRowProcessingState();
 		final var session = rowProcessingState.getSession();
 		final var persistenceContext = session.getPersistenceContextInternal();
@@ -199,36 +301,24 @@ public class EntityDelayedFetchInitializer
 				entityKey;
 		final var holder = persistenceContext.getEntityHolder( ek );
 		if ( holder != null && holder.getEntity() != null ) {
-			return persistenceContext.proxyFor( holder, concreteDescriptor );
+			data.setInstance( persistenceContext.proxyFor( holder, concreteDescriptor ));
+			return false;
 		}
 		// For primary key-based mappings we only use bytecode-laziness if the attribute is optional,
 		// because the non-optionality implies that it is safe to have a proxy
 		else if ( referencedModelPart.isOptional() && referencedModelPart.isLazy() ) {
-			return UNFETCHED_PROPERTY;
+			data.setInstance( UNFETCHED_PROPERTY );
+			return false;
 		}
 		else {
-			final Object instance = session.internalLoad(
-					concreteDescriptor.getEntityName(),
-					data.entityIdentifier,
-					false,
-					false
-			);
-			final var lazyInitializer = extractLazyInitializer( instance );
-			if ( lazyInitializer != null ) {
-				lazyInitializer.setUnwrap(
-						referencedModelPart.isUnwrapProxy()
-							&& concreteDescriptor.isInstrumented() );
-			}
-			return instance;
+			return true;
 		}
 	}
 
-	private Object instanceWithUniqueKey(
+	private void initializeInstanceWithUniqueKey(
 			EntityDelayedFetchInitializerData data,
 			EntityPersister concreteDescriptor) {
-		final var rowProcessingState = data.getRowProcessingState();
-		final var session = rowProcessingState.getSession();
-		final var persistenceContext = session.getPersistenceContextInternal();
+		final var session = data.getRowProcessingState().getSession();
 
 		final String uniqueKeyPropertyName = referencedModelPart.getReferencedPropertyName();
 		final var entityUniqueKey =
@@ -240,12 +330,30 @@ public class EntityDelayedFetchInitializer
 						session.getFactory()
 				);
 
-		Object instance = persistenceContext.getEntity( entityUniqueKey );
+		if ( needsInitializeByUniqueKey( data, entityUniqueKey ) ) {
+			final Object loadedInstance = concreteDescriptor.loadByUniqueKey(
+					uniqueKeyPropertyName,
+					data.entityIdentifier,
+					session
+			);
+			postLoadUnique( data, entityUniqueKey, loadedInstance );
+		}
+	}
+
+	private boolean needsInitializeByUniqueKey(
+			EntityDelayedFetchInitializerData data,
+			EntityUniqueKey entityUniqueKey) {
+		final var rowProcessingState = data.getRowProcessingState();
+		final var session = rowProcessingState.getSession();
+		final var persistenceContext = session.getPersistenceContextInternal();
+
+		final Object instance = persistenceContext.getEntity( entityUniqueKey );
 		if ( instance == null ) {
 			// For unique-key mappings, we always use bytecode-laziness if possible,
 			// because we can't generate a proxy based on the unique key yet
 			if ( referencedModelPart.isLazy() ) {
-				instance = UNFETCHED_PROPERTY;
+				data.setInstance( UNFETCHED_PROPERTY );
+				return false;
 			}
 			else {
 				// Try to load a PersistentAttributeInterceptable. If we get one, we can add the lazy
@@ -257,27 +365,40 @@ public class EntityDelayedFetchInitializer
 							(LazyAttributeLoadingInterceptor)
 									persistentAttributeInterceptable.$$_hibernate_getInterceptor();
 					persistentAttributeInterceptor.addLazyFieldByGraph( navigablePath.getLocalName() );
-					instance = UNFETCHED_PROPERTY;
+					data.setInstance( UNFETCHED_PROPERTY );
+					return false;
 				}
 				else {
-					instance = concreteDescriptor.loadByUniqueKey(
-							uniqueKeyPropertyName,
-							data.entityIdentifier,
-							session
-					);
-
-					// If the entity was not in the Persistence Context, but was found now,
-					// add it to the Persistence Context
-					if ( instance != null ) {
-						persistenceContext.addEntity( entityUniqueKey, instance );
-					}
+					return true;
 				}
 			}
 		}
+		else {
+			data.setInstance( instance );
+			return false;
+		}
+	}
+
+	private void postLoad(EntityDelayedFetchInitializerData data, EntityPersister concreteDescriptor, @Nullable Object instance) {
+		final var lazyInitializer = extractLazyInitializer( instance );
+		if ( lazyInitializer != null ) {
+			lazyInitializer.setUnwrap(
+					referencedModelPart.isUnwrapProxy()
+					&& concreteDescriptor.isInstrumented() );
+		}
+		data.setInstance( instance );
+	}
+
+	private void postLoadUnique(EntityDelayedFetchInitializerData data, EntityUniqueKey entityUniqueKey, @Nullable Object instance) {
+		// If the entity was not in the Persistence Context, but was found now,
+		// add it to the Persistence Context
 		if ( instance != null ) {
+			final PersistenceContext persistenceContext =
+					data.getRowProcessingState().getSession().getPersistenceContextInternal();
+			persistenceContext.addEntity( entityUniqueKey, instance );
 			instance = persistenceContext.proxyFor( instance );
 		}
-		return instance;
+		data.setInstance( instance );
 	}
 
 	private PersistentAttributeInterceptable getPersistentAttributeInterceptable(RowProcessingState rowProcessingState) {
