@@ -37,7 +37,7 @@ import static org.hibernate.proxy.HibernateProxy.extractLazyInitializer;
  * @author Andrea Boriero
  */
 public class EntitySelectFetchInitializer<Data extends EntitySelectFetchInitializer.EntitySelectFetchInitializerData>
-		extends AbstractInitializer<Data> implements EntityInitializer<Data> {
+		extends AbstractInitializer<Data> implements EntityInitializer<Data>, Initializer.InternalLoadConsumer<Data> {
 	protected final InitializerParent<?> parent;
 	private final NavigablePath navigablePath;
 	private final boolean isPartOfKey;
@@ -261,7 +261,7 @@ public class EntitySelectFetchInitializer<Data extends EntitySelectFetchInitiali
 					true,
 					toOneMapping.isInternalLoadNullable()
 			);
-			postLoad( data, concreteDescriptor, instance );
+			postInternalLoad( data, concreteDescriptor, instance );
 		}
 	}
 
@@ -276,7 +276,7 @@ public class EntitySelectFetchInitializer<Data extends EntitySelectFetchInitiali
 					data.entityIdentifier,
 					true,
 					toOneMapping.isInternalLoadNullable(),
-					this::postLoad
+					this
 			);
 		}
 		else {
@@ -284,7 +284,7 @@ public class EntitySelectFetchInitializer<Data extends EntitySelectFetchInitiali
 		}
 	}
 
-	private boolean needsInitialization(
+	protected boolean needsInitialization(
 			Data data,
 			@Nullable EntityHolder holder,
 			PersistenceContext persistenceContext) {
@@ -313,7 +313,8 @@ public class EntitySelectFetchInitializer<Data extends EntitySelectFetchInitiali
 		return true;
 	}
 
-	private void postLoad(Data data, EntityPersister concreteDescriptor, @Nullable Object instance) {
+	@Override
+	public void postInternalLoad(Data data, EntityPersister concreteDescriptor, @Nullable Object instance) {
 		data.setState( State.INITIALIZED );
 		data.setInstance( instance );
 

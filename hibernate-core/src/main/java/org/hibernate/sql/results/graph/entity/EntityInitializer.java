@@ -47,12 +47,10 @@ public interface EntityInitializer<Data extends InitializerData> extends Initial
 	default @Nullable EntityKey resolveEntityKeyOnly(RowProcessingState rowProcessingState) {
 		final Data data = getData( rowProcessingState );
 		resolveKey( data );
-		final EntityKey entityKey = new EntityKey(
+		return new EntityKey(
 				getEntityIdentifier( data ),
 				getConcreteDescriptor( data )
 		);
-		finishUpRow( data );
-		return entityKey;
 	}
 
 	@Nullable Object getEntityIdentifier(Data data);

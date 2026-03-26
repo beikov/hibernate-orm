@@ -5,15 +5,17 @@
 package org.hibernate.sql.results.graph.entity.internal;
 
 import java.util.HashMap;
-import java.util.HashSet;
+import java.util.List;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.hibernate.engine.spi.EntityKey;
+import org.hibernate.engine.spi.SharedSessionContractImplementor;
 import org.hibernate.metamodel.mapping.internal.ToOneAttributeMapping;
 import org.hibernate.persister.entity.EntityPersister;
 import org.hibernate.spi.NavigablePath;
 import org.hibernate.sql.results.graph.AssemblerCreationState;
 import org.hibernate.sql.results.graph.DomainResult;
+import org.hibernate.sql.results.graph.Initializer;
 import org.hibernate.sql.results.graph.InitializerData;
 import org.hibernate.sql.results.graph.InitializerParent;
 import org.hibernate.sql.results.jdbc.spi.RowProcessingState;
@@ -24,7 +26,8 @@ import static org.hibernate.internal.log.LoggingHelper.toLoggableString;
  * Loads entities from the persistence context or creates proxies if not found there,
  * and initializes all proxies in a batch.
  */
-public class BatchInitializeEntitySelectFetchInitializer extends AbstractBatchEntitySelectFetchInitializer<BatchInitializeEntitySelectFetchInitializer.BatchInitializeEntitySelectFetchInitializerData> {
+public class BatchInitializeEntitySelectFetchInitializer extends AbstractBatchEntitySelectFetchInitializer<BatchInitializeEntitySelectFetchInitializer.BatchInitializeEntitySelectFetchInitializerData>
+	implements Initializer.BatchLoadConsumer<Object> {
 
 	public static class BatchInitializeEntitySelectFetchInitializerData extends AbstractBatchEntitySelectFetchInitializerData {
 		private HashMap<EntityKey, Object> toBatchLoad;
@@ -53,11 +56,6 @@ public class BatchInitializeEntitySelectFetchInitializer extends AbstractBatchEn
 	}
 
 	@Override
-	protected void registerResolutionListener(BatchInitializeEntitySelectFetchInitializerData data) {
-		// No-op, because we resolve a proxy
-	}
-
-	@Override
 	protected void registerToBatchFetchQueue(BatchInitializeEntitySelectFetchInitializerData data) {
 		super.registerToBatchFetchQueue( data );
 		// Force creating a proxy
@@ -77,7 +75,7 @@ public class BatchInitializeEntitySelectFetchInitializer extends AbstractBatchEn
 	public @Nullable BatchLoadBlockingRunnable<?> getBatchLoad(BatchInitializeEntitySelectFetchInitializerData data) {
 		final var toBatchLoad = data.toBatchLoad;
 		return toBatchLoad != null
-			? new BatchLoadBlockingRunnable<>( toBatchLoad, this::postLoad )
+			? new BatchLoadBlockingRunnable<>( toBatchLoad, this )
 				: null;
 	}
 
@@ -86,15 +84,21 @@ public class BatchInitializeEntitySelectFetchInitializer extends AbstractBatchEn
 		super.endLoading( data );
 		final var keysToBatchLoad = data.toBatchLoad;
 		if ( keysToBatchLoad != null ) {
+			final RowProcessingState rowProcessingState = data.getRowProcessingState();
+			final SharedSessionContractImplementor session = rowProcessingState.getSession();
 			for ( var entityKey : keysToBatchLoad.keySet() ) {
-				postLoad( entityKey, null, data.getRowProcessingState() );
+				final Object instance = loadInstance( entityKey, toOneMapping, session );
+				postBatchLoad( entityKey, instance, null, rowProcessingState );
 			}
 			data.toBatchLoad = null;
 		}
 	}
 
-	private void postLoad(EntityKey entityKey, Object noop, RowProcessingState rowProcessingState) {
-		loadInstance( entityKey, toOneMapping, affectedByFilter, rowProcessingState.getSession() );
+	@Override
+	public void postBatchLoad(EntityKey entityKey, Object entity, Object noop, RowProcessingState rowProcessingState) {
+		if ( entity == null ) {
+			checkNotFound( toOneMapping, affectedByFilter, entityKey.getEntityName(), entityKey.getIdentifier() );
+		}
 	}
 
 	@Override

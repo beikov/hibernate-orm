@@ -44,11 +44,6 @@ public abstract class AbstractInitializer<Data extends InitializerData> implemen
 		return rowProcessingState.getInitializerData( initializerId );
 	}
 
-	@Override
-	public void finishUpRow(Data data) {
-		data.setState( Initializer.State.UNINITIALIZED );
-	}
-
 	protected abstract void forEachSubInitializer(
 			BiConsumer<Initializer<?>, RowProcessingState> consumer,
 			InitializerData data);

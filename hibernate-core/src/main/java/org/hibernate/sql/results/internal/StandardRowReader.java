@@ -12,10 +12,10 @@ import java.util.Map;
 import org.hibernate.Hibernate;
 import org.hibernate.engine.spi.EntityKey;
 import org.hibernate.internal.build.AllowReflection;
+import org.hibernate.metamodel.mapping.internal.ToOneAttributeMapping;
 import org.hibernate.sql.results.graph.DomainResultAssembler;
 import org.hibernate.sql.results.graph.Initializer;
 import org.hibernate.sql.results.graph.InitializerData;
-import org.hibernate.sql.results.graph.entity.internal.AbstractBatchEntitySelectFetchInitializer;
 import org.hibernate.sql.results.jdbc.spi.JdbcValuesMappingResolution;
 import org.hibernate.sql.results.jdbc.spi.RowProcessingState;
 import org.hibernate.sql.results.spi.RowReader;
@@ -238,12 +238,17 @@ public class StandardRowReader<T> implements RowReader<T> {
 	private void finishUpRow() {
 		for ( var data : initializersData ) {
 			data.setState( Initializer.State.UNINITIALIZED );
+			data.setBlockingAction( null );
+			data.setBlockingRunnable( null );
 		}
 	}
 
 	private void coordinateInitializers() {
 		for ( int i = 0; i < resultInitializers.length; i++ ) {
 			resultInitializers[i].resolveKey( resultInitializersData[i] );
+		}
+		for ( int i = 0; i < initializers.length; i++ ) {
+			run( initializersData[i] );
 		}
 		for ( int i = 0; i < beforeResolveInstance.length; i++ ) {
 			if ( beforeResolveInstanceData[i].getState() == Initializer.State.KEY_RESOLVED ) {
@@ -284,7 +289,7 @@ public class StandardRowReader<T> implements RowReader<T> {
 			return;
 		}
 		else if ( blockingRunnable instanceof Initializer.InternalLoadBlockingRunnable<X> internalLoad ) {
-			internalLoad.consumer().postLoad( data, internalLoad.concreteDescriptor(), data.getRowProcessingState().getSession().internalLoad(
+			internalLoad.consumer().postInternalLoad( data, internalLoad.concreteDescriptor(), data.getRowProcessingState().getSession().internalLoad(
 					internalLoad.concreteDescriptor().getEntityName(),
 					internalLoad.entityIdentifier(),
 					internalLoad.eager(),
@@ -292,7 +297,7 @@ public class StandardRowReader<T> implements RowReader<T> {
 			) );
 		}
 		else if ( blockingRunnable instanceof Initializer.LoadByUniqueKeyBlockingRunnable<X> loadByUniqueKey ) {
-			loadByUniqueKey.consumer().postLoad( data, loadByUniqueKey.entityUniqueKey(), loadByUniqueKey.concreteDescriptor().loadByUniqueKey(
+			loadByUniqueKey.consumer().postUniqueKeyLoad( data, loadByUniqueKey.entityUniqueKey(), loadByUniqueKey.concreteDescriptor().loadByUniqueKey(
 					loadByUniqueKey.entityUniqueKey().getUniqueKeyName(),
 					loadByUniqueKey.entityUniqueKey().getKey(),
 					data.getRowProcessingState().getSession()
@@ -330,17 +335,26 @@ public class StandardRowReader<T> implements RowReader<T> {
 	@Override
 	public void finishUp(RowProcessingState rowProcessingState) {
 		for ( int i = 0; i < initializers.length; i++ ) {
-			batchLoad( initializers[i].getBatchLoad( initializersData[i] ), rowProcessingState );
+			batchLoad( initializers[i], initializers[i].getBatchLoad( initializersData[i] ), rowProcessingState );
 		}
 //		for ( int i = 0; i < initializers.length; i++ ) {
 //			initializers[i].endLoading( initializersData[i] );
 //		}
 	}
 
-	private <X> void batchLoad(Initializer.@Nullable BatchLoadBlockingRunnable<X> batchLoadRunnable, RowProcessingState rowProcessingState) {
+	private <X> void batchLoad(
+			Initializer<?> initializer,
+			Initializer.@Nullable BatchLoadBlockingRunnable<X> batchLoadRunnable,
+			RowProcessingState rowProcessingState) {
 		if ( batchLoadRunnable != null ) {
+			final ToOneAttributeMapping toOne = (ToOneAttributeMapping) initializer.getInitializedPart();
 			for ( Map.Entry<EntityKey, X> entry : batchLoadRunnable.toBatchLoad().entrySet() ) {
-				batchLoadRunnable.consumer().postLoad( entry.getKey(), entry.getValue(), rowProcessingState );
+				batchLoadRunnable.consumer().postBatchLoad( entry.getKey(), rowProcessingState.getSession().internalLoad(
+						entry.getKey().getEntityName(),
+						entry.getKey().getIdentifier(),
+						true,
+						toOne.isInternalLoadNullable()
+				), entry.getValue(), rowProcessingState );
 			}
 		}
 	}

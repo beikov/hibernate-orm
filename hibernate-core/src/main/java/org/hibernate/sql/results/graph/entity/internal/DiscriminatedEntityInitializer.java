@@ -33,7 +33,8 @@ import static org.hibernate.proxy.HibernateProxy.extractLazyInitializer;
  */
 public class DiscriminatedEntityInitializer
 		extends AbstractInitializer<DiscriminatedEntityInitializer.DiscriminatedEntityInitializerData>
-		implements EntityInitializer<DiscriminatedEntityInitializer.DiscriminatedEntityInitializerData> {
+		implements EntityInitializer<DiscriminatedEntityInitializer.DiscriminatedEntityInitializerData>,
+			Initializer.InternalLoadConsumer<DiscriminatedEntityInitializer.DiscriminatedEntityInitializerData> {
 
 	protected final InitializerParent<?> parent;
 	private final NavigablePath navigablePath;
@@ -149,33 +150,61 @@ public class DiscriminatedEntityInitializer
 	}
 
 	@Override
+	public AsyncMode getAsyncMode() {
+		return isPartOfKey || parent.isEmbeddableInitializer() ? AsyncMode.BEFORE_RESOLVE : AsyncMode.AFTER_RESOLVE;
+	}
+
+	@Override
+	public BlockingRunnable<DiscriminatedEntityInitializerData> resolveInstanceAsync(DiscriminatedEntityInitializerData data) {
+		if ( data.getState() == State.KEY_RESOLVED ) {
+			data.setState( State.INITIALIZED );
+			if ( !needsInitialization( data ) ) {
+				data.setBlockingRunnable( new InternalLoadBlockingRunnable<>(
+						data.concreteDescriptor,
+						data.entityIdentifier,
+						eager,
+						// should not be null since we checked already.
+						// null would indicate bad data (ala, not-found handling)
+						false,
+						this
+				) );
+			}
+		}
+		return null;
+	}
+
+	@Override
 	public void resolveInstance(DiscriminatedEntityInitializerData data) {
 		if ( data.getState() == State.KEY_RESOLVED ) {
 			data.setState( State.INITIALIZED );
-			final var session = data.getRowProcessingState().getSession();
-			final Object identifier = data.entityIdentifier;
-			final var concreteDescriptor = data.concreteDescriptor;
-			final var entityKey = new EntityKey( identifier, concreteDescriptor );
-			final var persistenceContext = session.getPersistenceContextInternal();
-			final var holder = persistenceContext.getEntityHolder( entityKey );
-			final Object instance;
-			if ( holder != null ) {
-				instance = holder.getEntity();
-				data.setInstance( instance );
-			}
-			else {
-				instance = null;
-			}
-			if ( !isResolved( holder, instance ) ) {
-				data.setInstance( session.internalLoad(
-						concreteDescriptor.getEntityName(),
-						identifier,
+			if ( !needsInitialization( data ) ) {
+				data.setInstance( data.getRowProcessingState().getSession().internalLoad(
+						data.concreteDescriptor.getEntityName(),
+						data.entityIdentifier,
 						eager,
 						// should not be null since we checked already.  null would indicate bad data (ala, not-found handling)
 						false
 				) );
 			}
 		}
+	}
+
+	private boolean needsInitialization(DiscriminatedEntityInitializerData data) {
+		final var session = data.getRowProcessingState().getSession();
+		final Object identifier = data.entityIdentifier;
+		final var concreteDescriptor = data.concreteDescriptor;
+		final var entityKey = new EntityKey( identifier, concreteDescriptor );
+		final var persistenceContext = session.getPersistenceContextInternal();
+		final var holder = persistenceContext.getEntityHolder( entityKey );
+		final Object instance;
+		if ( holder != null ) {
+			instance = holder.getEntity();
+			data.setInstance( instance );
+		}
+		else {
+			instance = null;
+		}
+		return !isResolved( holder, instance );
 	}
 
 	private boolean isResolved(EntityHolder holder, Object instance) {
@@ -287,6 +316,27 @@ public class DiscriminatedEntityInitializer
 							false
 					) );
 		}
+	}
+
+	@Override
+	public void initializeInstanceAsync(DiscriminatedEntityInitializerData data) {
+		if ( data.getState() == State.RESOLVED ) {
+			data.setState( State.INITIALIZED );
+			data.setBlockingRunnable( new InternalLoadBlockingRunnable<>(
+					data.concreteDescriptor,
+					data.entityIdentifier,
+					eager,
+					// should not be null since we checked already.
+					// null would indicate bad data (ala, not-found handling)
+					false,
+					this
+			) );
+		}
+	}
+
+	@Override
+	public void postInternalLoad(DiscriminatedEntityInitializerData data, EntityPersister concreteDescriptor, @Nullable Object instance) {
+		data.setInstance( instance );
 	}
 
 	@Override

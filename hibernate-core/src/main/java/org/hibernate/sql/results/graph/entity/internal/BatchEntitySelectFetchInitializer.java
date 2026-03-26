@@ -10,6 +10,8 @@ import java.util.List;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.hibernate.engine.spi.EntityKey;
+import org.hibernate.engine.spi.PersistenceContext;
+import org.hibernate.engine.spi.SessionFactoryImplementor;
 import org.hibernate.engine.spi.SharedSessionContractImplementor;
 import org.hibernate.metamodel.mapping.AttributeMapping;
 import org.hibernate.metamodel.mapping.internal.ToOneAttributeMapping;
@@ -18,6 +20,7 @@ import org.hibernate.property.access.spi.Setter;
 import org.hibernate.spi.NavigablePath;
 import org.hibernate.sql.results.graph.AssemblerCreationState;
 import org.hibernate.sql.results.graph.DomainResult;
+import org.hibernate.sql.results.graph.Initializer;
 import org.hibernate.sql.results.graph.InitializerData;
 import org.hibernate.sql.results.graph.InitializerParent;
 import org.hibernate.sql.results.jdbc.spi.RowProcessingState;
@@ -25,7 +28,8 @@ import org.hibernate.type.Type;
 
 import static org.hibernate.internal.log.LoggingHelper.toLoggableString;
 
-public class BatchEntitySelectFetchInitializer extends AbstractBatchEntitySelectFetchInitializer<BatchEntitySelectFetchInitializer.BatchEntitySelectFetchInitializerData> {
+public class BatchEntitySelectFetchInitializer extends AbstractBatchEntitySelectFetchInitializer<BatchEntitySelectFetchInitializer.BatchEntitySelectFetchInitializerData>
+		implements Initializer.BatchLoadConsumer<List<BatchEntitySelectFetchInitializer.ParentInfo>> {
 	protected final AttributeMapping[] parentAttributes;
 	protected final Setter referencedModelPartSetter;
 	protected final Type referencedModelPartType;
@@ -62,7 +66,8 @@ public class BatchEntitySelectFetchInitializer extends AbstractBatchEntitySelect
 	}
 
 	@Override
-	protected void registerResolutionListener(BatchEntitySelectFetchInitializerData data) {
+	protected void registerToBatchFetchQueue(BatchEntitySelectFetchInitializerData data) {
+		super.registerToBatchFetchQueue( data );
 		final var rowProcessingState = data.getRowProcessingState();
 		final var owningData = owningEntityInitializer.getData( rowProcessingState );
 		var toBatchLoad = data.toBatchLoad;
@@ -85,7 +90,7 @@ public class BatchEntitySelectFetchInitializer extends AbstractBatchEntitySelect
 		}
 	}
 
-	private static class ParentInfo {
+	static class ParentInfo {
 		private final Object parentInstance;
 		private final int propertyIndex;
 
@@ -99,7 +104,7 @@ public class BatchEntitySelectFetchInitializer extends AbstractBatchEntitySelect
 	public @Nullable BatchLoadBlockingRunnable<?> getBatchLoad(BatchEntitySelectFetchInitializerData data) {
 		final var toBatchLoad = data.toBatchLoad;
 		return toBatchLoad != null
-			? new BatchLoadBlockingRunnable<>( toBatchLoad, this::postLoad )
+			? new BatchLoadBlockingRunnable<>( toBatchLoad, this )
 				: null;
 	}
 
@@ -108,18 +113,24 @@ public class BatchEntitySelectFetchInitializer extends AbstractBatchEntitySelect
 		super.endLoading( data );
 		final var toBatchLoad = data.toBatchLoad;
 		if ( toBatchLoad != null ) {
+			final RowProcessingState rowProcessingState = data.getRowProcessingState();
+			final SharedSessionContractImplementor session = rowProcessingState.getSession();
 			for ( var entry : toBatchLoad.entrySet() ) {
-				postLoad( entry.getKey(), entry.getValue(), data.getRowProcessingState() );
+				final Object instance = loadInstance( entry.getKey(), toOneMapping, session );
+				postBatchLoad( entry.getKey(), instance, entry.getValue(), rowProcessingState );
 			}
 			data.toBatchLoad = null;
 		}
 	}
 
-	private void postLoad(EntityKey entityKey, List<ParentInfo> parentInfos, RowProcessingState rowProcessingState) {
-		final var session = rowProcessingState.getSession();
-		final var factory = session.getFactory();
-		final var persistenceContext = session.getPersistenceContextInternal();
-		final Object instance = loadInstance( entityKey, toOneMapping, affectedByFilter, session );
+	@Override
+	public void postBatchLoad(EntityKey entityKey, Object instance, List<ParentInfo> parentInfos, RowProcessingState rowProcessingState) {
+		if ( instance == null ) {
+			checkNotFound( toOneMapping, affectedByFilter, entityKey.getEntityName(), entityKey.getIdentifier() );
+		}
+		final SharedSessionContractImplementor session = rowProcessingState.getSession();
+		final SessionFactoryImplementor factory = session.getFactory();
+		final PersistenceContext persistenceContext = session.getPersistenceContextInternal();
 		for ( var parentInfo : parentInfos ) {
 			final Object parentInstance = parentInfo.parentInstance;
 			final var entityEntry = persistenceContext.getEntry( parentInstance );

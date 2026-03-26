@@ -23,7 +23,6 @@ import org.hibernate.sql.results.jdbc.spi.RowProcessingState;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.HashMap;
 
 import static org.hibernate.engine.internal.ManagedTypeHelper.isPersistentAttributeInterceptable;
 import static org.hibernate.proxy.HibernateProxy.extractLazyInitializer;
@@ -71,8 +70,6 @@ public abstract class AbstractBatchEntitySelectFetchInitializer<Data extends Abs
 						Initializer.findOwningEntityInitializer( parent );
 		assert owningEntityInitializer != null : "This initializer requires an owning parent entity initializer";
 	}
-
-	protected abstract void registerResolutionListener(Data data);
 
 	@Override
 	public void resolveKey(Data data) {
@@ -239,7 +236,6 @@ public abstract class AbstractBatchEntitySelectFetchInitializer<Data extends Abs
 			else if ( entityHolder == null || !entityHolder.isEventuallyInitialized() ) {
 				// need to add the key to the batch queue only when the entity has not been already loaded or
 				// there isn't another initializer that is loading it
-				registerResolutionListener( data );
 				registerToBatchFetchQueue( data );
 			}
 		}
@@ -273,9 +269,8 @@ public abstract class AbstractBatchEntitySelectFetchInitializer<Data extends Abs
 	@Override
 	protected @Nullable BlockingRunnable<Data> initializeAsync(Data data) {
 		if ( data.getState() == State.RESOLVED ) {
-			data.setState( State.INITIALIZED );
 			if ( data.batchDisabled ) {
-				return new LazyLoadBlockingRunnable<>( data.getInstance() );
+				return super.initializeAsync( data );
 			}
 		}
 		return null;
@@ -291,9 +286,6 @@ public abstract class AbstractBatchEntitySelectFetchInitializer<Data extends Abs
 				return entity;
 			}
 		}
-		// we need to register a resolution listener only if there is not an already initialized instance
-		// or an instance that another initializer is loading
-		registerResolutionListener( data );
 		return null;
 	}
 
@@ -325,6 +317,15 @@ public abstract class AbstractBatchEntitySelectFetchInitializer<Data extends Abs
 			}
 			data.setState( State.INITIALIZED );
 		}
+	}
+
+	protected static Object loadInstance(
+			EntityKey entityKey,
+			ToOneAttributeMapping toOneMapping,
+			SharedSessionContractImplementor session) {
+		final String entityName = entityKey.getEntityName();
+		final Object identifier = entityKey.getIdentifier();
+		return session.internalLoad( entityName, identifier, true, toOneMapping.isInternalLoadNullable() );
 	}
 
 	protected static Object loadInstance(

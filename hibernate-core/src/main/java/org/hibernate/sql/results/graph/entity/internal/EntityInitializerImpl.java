@@ -853,6 +853,8 @@ public class EntityInitializerImpl
 		}
 		else {
 			data.setInstance( instance );
+			// todo: can this really lazy load?
+			assert Hibernate.isInitialized( instance );
 			final Object entityInstanceForNotify = data.entityInstanceForNotify = Hibernate.unproxy( instance );
 			data.concreteDescriptor = session.getEntityPersister( null, entityInstanceForNotify );
 			resolveEntityKey( data,
@@ -1413,6 +1415,7 @@ public class EntityInitializerImpl
 				// If this initializer owns the entity, we have to remove the entity holder,
 				// because the subsequent loading process will claim the entity
 				session.getPersistenceContextInternal().removeEntityHolder( data.entityKey );
+				// todo: replace with BlockingAction
 				return session.internalLoad(
 						data.concreteDescriptor.getEntityName(),
 						data.entityKey.getIdentifier(),

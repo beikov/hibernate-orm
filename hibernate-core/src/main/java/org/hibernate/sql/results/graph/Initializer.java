@@ -155,6 +155,12 @@ public interface Initializer<Data extends InitializerData> {
 		FINISH
 	}
 
+//	enum BlockingAction {
+//		INTERNAL_LOAD,
+//		LOAD_BY_UNIQUE_KEY,
+//		LAZY_LOAD
+//	}
+
 	sealed interface BlockingRunnable<X extends InitializerData> {
 	}
 
@@ -168,7 +174,7 @@ public interface Initializer<Data extends InitializerData> {
 	}
 
 	interface InternalLoadConsumer<X extends InitializerData> {
-		void postLoad(X data, EntityPersister concreteDescriptor, @Nullable Object entity);
+		void postInternalLoad(X data, EntityPersister concreteDescriptor, @Nullable Object entity);
 	}
 
 	record LoadByUniqueKeyBlockingRunnable<X extends InitializerData>(
@@ -179,7 +185,7 @@ public interface Initializer<Data extends InitializerData> {
 	}
 
 	interface LoadByUniqueKeyConsumer<X extends InitializerData> {
-		void postLoad(X data, EntityUniqueKey entityUniqueKey, @Nullable Object entity);
+		void postUniqueKeyLoad(X data, EntityUniqueKey entityUniqueKey, @Nullable Object entity);
 	}
 
 	record LazyLoadBlockingRunnable<X extends InitializerData>(Object entity) implements BlockingRunnable<X> {
@@ -195,7 +201,7 @@ public interface Initializer<Data extends InitializerData> {
 	}
 
 	interface BatchLoadConsumer<X> {
-		void postLoad(EntityKey entityKey, X context, RowProcessingState rowProcessingState);
+		void postBatchLoad(EntityKey entityKey, Object entity, X context, RowProcessingState rowProcessingState);
 	}
 
 	default void resolveInstance(RowProcessingState rowProcessingState) {
@@ -262,7 +268,9 @@ public interface Initializer<Data extends InitializerData> {
 	 * Provides ability to complete processing from the current row and
 	 * prepare for the next row.
 	 */
-	void finishUpRow(Data data);
+	default void finishUpRow(Data data) {
+		// by default - nothing to do
+	}
 
 //	default void finishUpRow(RowProcessingState rowProcessingState) {
 //		finishUpRow( getData( rowProcessingState ) );

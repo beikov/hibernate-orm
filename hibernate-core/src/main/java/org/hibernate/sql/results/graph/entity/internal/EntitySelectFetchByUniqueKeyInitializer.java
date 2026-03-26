@@ -11,8 +11,8 @@ import org.hibernate.persister.entity.EntityPersister;
 import org.hibernate.spi.NavigablePath;
 import org.hibernate.sql.results.graph.AssemblerCreationState;
 import org.hibernate.sql.results.graph.DomainResult;
+import org.hibernate.sql.results.graph.Initializer;
 import org.hibernate.sql.results.graph.InitializerParent;
-import org.hibernate.sql.results.jdbc.spi.RowProcessingState;
 
 import static org.hibernate.internal.log.LoggingHelper.toLoggableString;
 
@@ -20,7 +20,8 @@ import static org.hibernate.internal.log.LoggingHelper.toLoggableString;
  * @author Andrea Boriero
  */
 public class EntitySelectFetchByUniqueKeyInitializer
-		extends EntitySelectFetchInitializer<EntitySelectFetchInitializer.EntitySelectFetchInitializerData> {
+		extends EntitySelectFetchInitializer<EntitySelectFetchInitializer.EntitySelectFetchInitializerData>
+		implements Initializer.LoadByUniqueKeyConsumer<EntitySelectFetchInitializer.EntitySelectFetchInitializerData> {
 	private final ToOneAttributeMapping fetchedAttribute;
 
 	public EntitySelectFetchByUniqueKeyInitializer(
@@ -59,7 +60,7 @@ public class EntitySelectFetchByUniqueKeyInitializer
 		else {
 			final Object instance =
 					concreteDescriptor.loadByUniqueKey( uniqueKeyPropertyName, data.entityIdentifier, session );
-			postLoad( data, entityUniqueKey, instance );
+			postUniqueKeyLoad( data, entityUniqueKey, instance );
 		}
 	}
 
@@ -89,12 +90,13 @@ public class EntitySelectFetchByUniqueKeyInitializer
 			return new LoadByUniqueKeyBlockingRunnable<>(
 					concreteDescriptor,
 					entityUniqueKey,
-					this::postLoad
+					this
 			);
 		}
 	}
 
-	private void postLoad(EntitySelectFetchInitializerData data, EntityUniqueKey entityUniqueKey, @Nullable Object instance) {
+	@Override
+	public void postUniqueKeyLoad(EntitySelectFetchInitializerData data, EntityUniqueKey entityUniqueKey, @Nullable Object instance) {
 		final var session = data.getRowProcessingState().getSession();
 		final var persistenceContext = session.getPersistenceContextInternal();
 

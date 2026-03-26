@@ -45,7 +45,9 @@ import static org.hibernate.sql.results.graph.entity.internal.EntityInitializerI
  */
 public class EntityDelayedFetchInitializer
 		extends AbstractInitializer<EntityDelayedFetchInitializer.EntityDelayedFetchInitializerData>
-		implements EntityInitializer<EntityDelayedFetchInitializer.EntityDelayedFetchInitializerData> {
+		implements EntityInitializer<EntityDelayedFetchInitializer.EntityDelayedFetchInitializerData>,
+		Initializer.InternalLoadConsumer<EntityDelayedFetchInitializer.EntityDelayedFetchInitializerData>,
+		Initializer.LoadByUniqueKeyConsumer<EntityDelayedFetchInitializer.EntityDelayedFetchInitializerData>{
 
 	private final InitializerParent<?> parent;
 	private final NavigablePath navigablePath;
@@ -255,7 +257,7 @@ public class EntityDelayedFetchInitializer
 				return new LoadByUniqueKeyBlockingRunnable<>(
 						concreteDescriptor,
 						entityUniqueKey,
-						this::postLoadUnique
+						this
 				);
 			}
 		}
@@ -266,7 +268,7 @@ public class EntityDelayedFetchInitializer
 						data.entityIdentifier,
 						false,
 						false,
-						this::postLoad
+						this
 				);
 			}
 		}
@@ -284,7 +286,7 @@ public class EntityDelayedFetchInitializer
 					false,
 					false
 			);
-			postLoad( data, concreteDescriptor, instance );
+			postInternalLoad( data, concreteDescriptor, instance );
 		}
 	}
 
@@ -336,7 +338,7 @@ public class EntityDelayedFetchInitializer
 					data.entityIdentifier,
 					session
 			);
-			postLoadUnique( data, entityUniqueKey, loadedInstance );
+			postUniqueKeyLoad( data, entityUniqueKey, loadedInstance );
 		}
 	}
 
@@ -379,7 +381,8 @@ public class EntityDelayedFetchInitializer
 		}
 	}
 
-	private void postLoad(EntityDelayedFetchInitializerData data, EntityPersister concreteDescriptor, @Nullable Object instance) {
+	@Override
+	public void postInternalLoad(EntityDelayedFetchInitializerData data, EntityPersister concreteDescriptor, @Nullable Object instance) {
 		final var lazyInitializer = extractLazyInitializer( instance );
 		if ( lazyInitializer != null ) {
 			lazyInitializer.setUnwrap(
@@ -389,7 +392,8 @@ public class EntityDelayedFetchInitializer
 		data.setInstance( instance );
 	}
 
-	private void postLoadUnique(EntityDelayedFetchInitializerData data, EntityUniqueKey entityUniqueKey, @Nullable Object instance) {
+	@Override
+	public void postUniqueKeyLoad(EntityDelayedFetchInitializerData data, EntityUniqueKey entityUniqueKey, @Nullable Object instance) {
 		// If the entity was not in the Persistence Context, but was found now,
 		// add it to the Persistence Context
 		if ( instance != null ) {

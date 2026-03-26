@@ -9,11 +9,10 @@ import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.hibernate.engine.spi.EntityKey;
+import org.hibernate.engine.spi.SharedSessionContractImplementor;
 import org.hibernate.metamodel.mapping.AttributeMapping;
 import org.hibernate.metamodel.mapping.internal.ToOneAttributeMapping;
 import org.hibernate.persister.entity.EntityPersister;
@@ -22,6 +21,7 @@ import org.hibernate.property.access.spi.Setter;
 import org.hibernate.spi.NavigablePath;
 import org.hibernate.sql.results.graph.AssemblerCreationState;
 import org.hibernate.sql.results.graph.DomainResult;
+import org.hibernate.sql.results.graph.Initializer;
 import org.hibernate.sql.results.graph.InitializerData;
 import org.hibernate.sql.results.graph.InitializerParent;
 import org.hibernate.sql.results.graph.entity.EntityInitializer;
@@ -30,7 +30,8 @@ import org.hibernate.type.Type;
 
 import static org.hibernate.internal.log.LoggingHelper.toLoggableString;
 
-public class BatchEntityInsideEmbeddableSelectFetchInitializer extends AbstractBatchEntitySelectFetchInitializer<BatchEntityInsideEmbeddableSelectFetchInitializer.BatchEntityInsideEmbeddableSelectFetchInitializerData> {
+public class BatchEntityInsideEmbeddableSelectFetchInitializer extends AbstractBatchEntitySelectFetchInitializer<BatchEntityInsideEmbeddableSelectFetchInitializer.BatchEntityInsideEmbeddableSelectFetchInitializerData>
+	implements Initializer.BatchLoadConsumer<List<BatchEntityInsideEmbeddableSelectFetchInitializer.ParentInfo>> {
 	protected final Setter referencedModelPartSetter;
 	protected final AttributeMapping[] rootEmbeddableAttributes;
 	protected final Getter[] rootEmbeddableGetters;
@@ -119,35 +120,46 @@ public class BatchEntityInsideEmbeddableSelectFetchInitializer extends AbstractB
 	@Override
 	public void initializeInstance(BatchEntityInsideEmbeddableSelectFetchInitializerData data) {
 		super.initializeInstance( data );
-		// todo: check why this can't be moved to #registerToBatchFetchQueue
+		// The registration must happen in the initializeInstance phase,
+		// because it requires access to the parent embeddable instance.
+		// That is not available when registerToBatchFetchQueue runs,
+		// which is called in the resolveInstance phase
 		if ( data.getInstance() == BATCH_PROPERTY ) {
-			final var rowProcessingState = data.getRowProcessingState();
-			final var owningData = owningEntityInitializer.getData( rowProcessingState );
-			final int owningEntitySubclassId =
-					owningEntityInitializer.getConcreteDescriptor( owningData )
-							.getSubclassId();
-			final var rootEmbeddableAttribute = rootEmbeddableAttributes[owningEntitySubclassId];
-			if ( rootEmbeddableAttribute != null ) {
-				var toBatchLoad = data.toBatchLoad;
-				if ( toBatchLoad == null ) {
-					toBatchLoad = data.toBatchLoad = new HashMap<>();
-				}
-				toBatchLoad.computeIfAbsent( data.entityKey, key -> new ArrayList<>() )
-						.add( new ParentInfo(
-								owningEntityInitializer.getTargetInstance( owningData ),
-								parent.getResolvedInstance( rowProcessingState ),
-								rootEmbeddableAttribute.getStateArrayPosition(),
-								owningEntitySubclassId
-						) );
-			}
+			registerToBatchLoad( data );
 		}
 	}
 
 	@Override
-	protected void registerResolutionListener(BatchEntityInsideEmbeddableSelectFetchInitializerData data) {
+	public void initializeInstanceAsync(BatchEntityInsideEmbeddableSelectFetchInitializerData data) {
+		super.initializeInstanceAsync( data );
+		if ( data.getInstance() == BATCH_PROPERTY ) {
+			registerToBatchLoad( data );
+		}
 	}
 
-	private static class ParentInfo {
+	private void registerToBatchLoad(BatchEntityInsideEmbeddableSelectFetchInitializerData data) {
+		final var rowProcessingState = data.getRowProcessingState();
+		final var owningData = owningEntityInitializer.getData( rowProcessingState );
+		final int owningEntitySubclassId =
+				owningEntityInitializer.getConcreteDescriptor( owningData )
+						.getSubclassId();
+		final var rootEmbeddableAttribute = rootEmbeddableAttributes[owningEntitySubclassId];
+		if ( rootEmbeddableAttribute != null ) {
+			var toBatchLoad = data.toBatchLoad;
+			if ( toBatchLoad == null ) {
+				toBatchLoad = data.toBatchLoad = new HashMap<>();
+			}
+			toBatchLoad.computeIfAbsent( data.entityKey, key -> new ArrayList<>() )
+					.add( new ParentInfo(
+							owningEntityInitializer.getTargetInstance( owningData ),
+							parent.getResolvedInstance( rowProcessingState ),
+							rootEmbeddableAttribute.getStateArrayPosition(),
+							owningEntitySubclassId
+					) );
+		}
+	}
+
+	static class ParentInfo {
 		private final Object parentEntityInstance;
 		private final Object parentInstance;
 		private final int propertyIndex;
@@ -169,7 +181,7 @@ public class BatchEntityInsideEmbeddableSelectFetchInitializer extends AbstractB
 	public @Nullable BatchLoadBlockingRunnable<?> getBatchLoad(BatchEntityInsideEmbeddableSelectFetchInitializerData data) {
 		final var toBatchLoad = data.toBatchLoad;
 		return toBatchLoad != null
-			? new BatchLoadBlockingRunnable<>( toBatchLoad, this::postLoad )
+			? new BatchLoadBlockingRunnable<>( toBatchLoad, this )
 				: null;
 	}
 
@@ -178,18 +190,24 @@ public class BatchEntityInsideEmbeddableSelectFetchInitializer extends AbstractB
 		super.endLoading( data );
 		final var toBatchLoad = data.toBatchLoad;
 		if ( toBatchLoad != null ) {
+			final RowProcessingState rowProcessingState = data.getRowProcessingState();
+			final SharedSessionContractImplementor session = rowProcessingState.getSession();
 			for ( var entry : toBatchLoad.entrySet() ) {
-				postLoad( entry.getKey(), entry.getValue(), data.getRowProcessingState() );
+				final Object instance = loadInstance( entry.getKey(), toOneMapping, session );
+				postBatchLoad( entry.getKey(), instance, entry.getValue(), rowProcessingState );
 			}
 			data.toBatchLoad = null;
 		}
 	}
 
-	private void postLoad(EntityKey entityKey, List<ParentInfo> parentInfos, RowProcessingState rowProcessingState) {
+	@Override
+	public void postBatchLoad(EntityKey entityKey, Object loadedInstance, List<ParentInfo> parentInfos, RowProcessingState rowProcessingState) {
+		if ( loadedInstance == null ) {
+			checkNotFound( toOneMapping, affectedByFilter, entityKey.getEntityName(), entityKey.getIdentifier() );
+		}
 		final var session = rowProcessingState.getSession();
 		final var factory = session.getFactory();
 		final var persistenceContext = session.getPersistenceContextInternal();
-		final Object loadedInstance = loadInstance( entityKey, toOneMapping, affectedByFilter, session );
 		for ( ParentInfo parentInfo : parentInfos ) {
 			final Object parentEntityInstance = parentInfo.parentEntityInstance;
 			final var parentEntityEntry = persistenceContext.getEntry( parentEntityInstance );
