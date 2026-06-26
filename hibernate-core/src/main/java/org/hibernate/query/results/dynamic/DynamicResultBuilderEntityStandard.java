@@ -19,6 +19,7 @@ import org.hibernate.engine.FetchTiming;
 import org.hibernate.metamodel.mapping.CollectionPart;
 import org.hibernate.metamodel.mapping.EntityIdentifierMapping;
 import org.hibernate.metamodel.mapping.EntityMappingType;
+import org.hibernate.metamodel.mapping.JdbcMapping;
 import org.hibernate.metamodel.mapping.ModelPart;
 import org.hibernate.metamodel.mapping.PluralAttributeMapping;
 import org.hibernate.metamodel.mapping.SelectableMapping;
@@ -274,6 +275,7 @@ public class DynamicResultBuilderEntityStandard
 					discriminatorColumnName,
 					tableReference,
 					entityMapping.getDiscriminatorMapping(),
+					entityMapping.getDiscriminatorMapping().getUnderlyingJdbcMapping(),
 					jdbcResultsMetadata,
 					domainResultCreationState
 			);
@@ -326,6 +328,23 @@ public class DynamicResultBuilderEntityStandard
 			SelectableMapping selectableMapping,
 			JdbcValuesMetadata jdbcResultsMetadata,
 			DomainResultCreationState domainResultCreationState) {
+		resolveSqlSelection(
+				columnAlias,
+				tableReference,
+				selectableMapping,
+				selectableMapping.getJdbcMapping(),
+				jdbcResultsMetadata,
+				domainResultCreationState
+		);
+	}
+
+	private void resolveSqlSelection(
+			String columnAlias,
+			TableReference tableReference,
+			SelectableMapping selectableMapping,
+			JdbcMapping jdbcMapping,
+			JdbcValuesMetadata jdbcResultsMetadata,
+			DomainResultCreationState domainResultCreationState) {
 		final DomainResultCreationStateImpl creationStateImpl = impl( domainResultCreationState );
 		creationStateImpl.resolveSqlSelection(
 				ResultsHelper.resolveSqlExpression(
@@ -333,6 +352,7 @@ public class DynamicResultBuilderEntityStandard
 						jdbcResultsMetadata,
 						tableReference,
 						selectableMapping,
+						jdbcMapping,
 						columnAlias
 				),
 				selectableMapping.getJdbcMapping().getJdbcJavaType(),

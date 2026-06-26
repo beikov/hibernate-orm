@@ -7,6 +7,7 @@
 package org.hibernate.query.results;
 
 import org.hibernate.metamodel.mapping.EntityIdentifierMapping;
+import org.hibernate.metamodel.mapping.JdbcMapping;
 import org.hibernate.metamodel.mapping.ModelPart;
 import org.hibernate.metamodel.mapping.SelectableMapping;
 import org.hibernate.metamodel.mapping.internal.SingleAttributeIdentifierMapping;
@@ -54,10 +55,28 @@ public class ResultsHelper {
 			TableReference tableReference,
 			SelectableMapping selectableMapping,
 			String columnAlias) {
+		return resolveSqlExpression(
+				resolver,
+				jdbcValuesMetadata,
+				tableReference,
+				selectableMapping,
+				selectableMapping.getJdbcMapping(),
+				columnAlias
+		);
+	}
+
+	public static Expression resolveSqlExpression(
+			DomainResultCreationStateImpl resolver,
+			JdbcValuesMetadata jdbcValuesMetadata,
+			TableReference tableReference,
+			SelectableMapping selectableMapping,
+			JdbcMapping jdbcMapping,
+			String columnAlias) {
 		return resolver.resolveSqlExpression(
 				createColumnReferenceKey(
 						tableReference,
-						selectableMapping
+						selectableMapping.getSelectablePath(),
+						jdbcMapping
 				),
 				processingState -> {
 					final int jdbcPosition = jdbcValuesMetadata.resolveColumnPosition( columnAlias );

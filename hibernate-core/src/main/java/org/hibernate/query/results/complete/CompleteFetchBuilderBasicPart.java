@@ -113,9 +113,17 @@ public class CompleteFetchBuilderBasicPart implements CompleteFetchBuilder, Basi
 
 		final int valuesArrayPosition = jdbcPositionToValuesArrayPosition( jdbcPosition );
 
+		final JdbcMapping jdbcMapping;
+		if ( referencedModelPart instanceof DiscriminatorMapping ) {
+			jdbcMapping = ( (DiscriminatorMapping) referencedModelPart ).getUnderlyingJdbcMapping();
+		}
+		else {
+			jdbcMapping = referencedModelPart.getJdbcMapping();
+		}
+
 		// we just care about the registration here.  The ModelPart will find it later
 		creationStateImpl.resolveSqlExpression(
-				createColumnReferenceKey( tableReference, referencedModelPart ),
+				createColumnReferenceKey( tableReference, referencedModelPart.getSelectablePath(), jdbcMapping ),
 				processingState -> new ResultSetMappingSqlSelection( valuesArrayPosition, referencedModelPart )
 		);
 

@@ -312,7 +312,7 @@ public class EntityValuedPathInterpretation<T> extends AbstractSqmPathInterpreta
 				if ( discriminatorMapping != null ) {
 					expressions.add( discriminatorMapping.resolveSqlExpression(
 							navigablePath,
-							discriminatorMapping.getJdbcMapping(),
+							discriminatorMapping.getUnderlyingJdbcMapping(),
 							tableGroup,
 							sqlAstCreationState
 					) );
